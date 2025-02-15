@@ -18,17 +18,20 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy go.mod and go.sum first to leverage Docker cache
+# Copy go.mod and go.sum first
 COPY go.mod go.sum ./
-RUN go mod download
+
+# More verbose module download
+RUN go mod download -x || (echo "Module download failed" && exit 1)
 
 # Copy the rest of the code
 COPY . .
 
-# Install Playwright
-RUN go build -o /usr/local/bin/playwright github.com/playwright-community/playwright-go/cmd/playwright
+# Install Playwright with verbose output
+RUN go build -v -o /usr/local/bin/playwright github.com/playwright-community/playwright-go/cmd/playwright
 RUN playwright install --with-deps chromium
 
-RUN go build -o app
+# Build the app with verbose output
+RUN go build -v -o app
 
 CMD ["./app"] 
