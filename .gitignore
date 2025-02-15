@@ -1,0 +1,23 @@
+# Binaries
+app
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Output directories
+media/
+dist/
+
+# Environment files
+.env
+.env.*
+
+# IDE files
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db

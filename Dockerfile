@@ -1,6 +1,6 @@
 FROM golang:1.23.3
 
-# Install system dependencies
+# Install system dependencies including libvips
 RUN apt-get update && apt-get install -y \
     libnss3 \
     libnspr4 \
@@ -14,40 +14,35 @@ RUN apt-get update && apt-get install -y \
     libxfixes3 \
     libxrandr2 \
     libgbm1 \
-    libasound2
+    libasound2 \
+    libvips-dev \
+    pkg-config
 
 WORKDIR /app
 
-# Debug: Show Go version and environment - CHECK THIS OUTPUT IN YOUR BUILD LOGS!
+# Copy entire project first to resolve dependencies
+COPY . .
+
+# Debug: Show Go version and environment
 RUN go version && \
     go env && \
     echo "GOPATH: $GOPATH" && \
     echo "GOROOT: $GOROOT"
 
-# Copy go.mod and go.sum
-COPY go.mod go.sum ./
-
-# Show module files for debugging
-RUN echo "Module files:" && \
-    ls -la && \
-    echo "\ngo.mod contents:" && \
-    cat go.mod && \
-    echo "\ngo.sum contents:" && \
-    cat go.sum
-
-# Try to tidy and download with explicit go path
-RUN echo "--- Running go mod tidy with explicit path ---" && go mod tidy
-RUN echo "--- Running go mod download with explicit path ---" && \
-    GOSUMDB=off GOPROXY=https://proxy.golang.org,direct /usr/local/go/bin/go mod download -v || (echo "Download failed with status: $?" && exit 1)
-
-# Copy the rest of the code
-COPY . .
+# Try to tidy and download modules
+RUN echo "--- Running go mod tidy ---" && \
+    go mod tidy && \
+    echo "--- Running go mod download ---" && \
+    GOSUMDB=off GOPROXY=https://proxy.golang.org,direct go mod download
 
 # Install Playwright
 RUN go build -v -o /usr/local/bin/playwright github.com/playwright-community/playwright-go/cmd/playwright
 RUN playwright install --with-deps chromium
 
-# Build the app
-RUN go build -v -o app
+# List all files and try to build with error capture
+RUN echo "Contents of current directory:" && \
+    ls -la && \
+    echo "--- Building app ---" && \
+    go build -v 2>&1 || (echo "Build failed. Error output above.")
 
 CMD ["./app"]
