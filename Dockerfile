@@ -1,4 +1,4 @@
-FROM golang:1.21
+FROM golang:1.23.3
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -18,14 +18,25 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy go.mod and go.sum first
+# Debug: Show Go version and environment
+RUN go version && \
+    go env && \
+    echo "GOPATH: $GOPATH" && \
+    echo "GOROOT: $GOROOT"
+
+# Copy go.mod and go.sum
 COPY go.mod go.sum ./
 
 # Show module files for debugging
-RUN echo "Module files:" && ls -la
+RUN echo "Module files:" && \
+    ls -la && \
+    echo "\ngo.mod contents:" && \
+    cat go.mod && \
+    echo "\ngo.sum contents:" && \
+    cat go.sum
 
-# Download dependencies
-RUN go mod download
+# Try to download with verbose output
+RUN GOPROXY=direct go mod download -v -x || (echo "Download failed with status: $?" && exit 1)
 
 # Copy the rest of the code
 COPY . .
