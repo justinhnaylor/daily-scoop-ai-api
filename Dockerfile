@@ -19,8 +19,10 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 COPY . .
 
-# Install Playwright
-RUN go run github.com/playwright-community/playwright-go/cmd/playwright install --with-deps
+# Install dependencies and Playwright
+RUN go mod download
+RUN go build -o /usr/local/bin/playwright github.com/playwright-community/playwright-go/cmd/playwright
+RUN playwright install --with-deps chromium
 
 RUN go build -o app
 
