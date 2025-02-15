@@ -1,5 +1,8 @@
 FROM golang:1.23.3
 
+# Add build argument for mode
+ARG MODE=daily
+
 # Install system dependencies including libvips
 RUN apt-get update && apt-get install -y \
     libnss3 \
@@ -20,29 +23,24 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy entire project first to resolve dependencies
+# Copy go mod files first
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy source code
 COPY . .
 
-# Debug: Show Go version and environment
-RUN go version && \
-    go env && \
-    echo "GOPATH: $GOPATH" && \
-    echo "GOROOT: $GOROOT"
-
-# Try to tidy and download modules
-RUN echo "--- Running go mod tidy ---" && \
-    go mod tidy && \
-    echo "--- Running go mod download ---" && \
-    GOSUMDB=off GOPROXY=https://proxy.golang.org,direct go mod download
+# Build the application with verbose output
+RUN go build -v -o app && \
+    chmod +x app && \
+    ls -la app
 
 # Install Playwright
 RUN go build -v -o /usr/local/bin/playwright github.com/playwright-community/playwright-go/cmd/playwright
 RUN playwright install --with-deps chromium
 
-# List all files and try to build with error capture
-RUN echo "Contents of current directory:" && \
-    ls -la && \
-    echo "--- Building app ---" && \
-    go build -v 2>&1 || (echo "Build failed. Error output above.")
-
-CMD ["./app"]
+# Use the build argument in the command
+ENTRYPOINT ["/app/app"]
+CMD ["-mode=${MODE}"]
