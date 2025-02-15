@@ -18,22 +18,17 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy entire project first
+# Copy go.mod and go.sum first
+COPY go.mod go.sum ./
+
+# Show module files for debugging
+RUN echo "Module files:" && ls -la
+
+# Download dependencies
+RUN go mod download
+
+# Copy the rest of the code
 COPY . .
-
-# Debug: Show directory contents and go.mod content
-RUN echo "Current directory:" && \
-    pwd && \
-    echo "\nDirectory contents:" && \
-    ls -la && \
-    echo "\ngo.mod contents:" && \
-    cat go.mod || echo "go.mod not found"
-
-# Try to initialize and tidy with error output
-RUN go mod init main 2>&1 || true && \
-    go mod tidy -v 2>&1 && \
-    echo "go.mod after tidy:" && \
-    cat go.mod
 
 # Install Playwright
 RUN go build -v -o /usr/local/bin/playwright github.com/playwright-community/playwright-go/cmd/playwright
