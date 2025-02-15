@@ -51,7 +51,7 @@ func GetTrendingKeywords() ([]TrendingTopic, error) {
 	defer pw.Stop()
 
 	browser, err := pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
-		Headless: playwright.Bool(false),
+		Headless: playwright.Bool(true),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("could not launch browser: %v", err)
@@ -464,7 +464,7 @@ func GetTrendingKeywordsFromURL(trendURL string, maxTopics int) ([]TrendingTopic
 	defer pw.Stop()
 
 	browser, err := pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
-		Headless: playwright.Bool(false),
+		Headless: playwright.Bool(true),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("could not launch browser: %v", err)
