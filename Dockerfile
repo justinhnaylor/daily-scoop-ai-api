@@ -18,26 +18,18 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
+# Copy entire project first to resolve dependencies
+COPY . .
+
 # Debug: Show Go version and environment
 RUN go version && \
     go env && \
     echo "GOPATH: $GOPATH" && \
     echo "GOROOT: $GOROOT"
 
-# Copy go.mod and go.sum
-COPY go.mod go.sum ./
-
-# Show module files for debugging
-RUN echo "Module files:" && \
-    ls -la && \
-    echo "\ngo.mod contents:" && \
-    cat go.mod
-
-# Try to download with more debugging options
-RUN GOSUMDB=off GOPROXY=https://proxy.golang.org,direct go mod download -v -x
-
-# Copy the rest of the code
-COPY . .
+# Try to tidy and download modules
+RUN go mod tidy && \
+    GOSUMDB=off GOPROXY=https://proxy.golang.org,direct go mod download -v
 
 # Install Playwright
 RUN go build -v -o /usr/local/bin/playwright github.com/playwright-community/playwright-go/cmd/playwright
