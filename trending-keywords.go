@@ -80,13 +80,13 @@ func GetTrendingKeywords() ([]TrendingTopic, error) {
 	// Navigate to Google Trends
 	if _, err = page.Goto("https://trends.google.com/trending?geo=US&hours=24", playwright.PageGotoOptions{
 		WaitUntil: playwright.WaitUntilStateNetworkidle,
-		Timeout:   playwright.Float(30000),
+		Timeout:   playwright.Float(60000),
 	}); err != nil {
 		return nil, fmt.Errorf("could not go to Google Trends: %v", err)
 	}
 
-	// Wait for the content to be visible
-	time.Sleep(2 * time.Second)
+	// Wait longer for the content to be visible
+	time.Sleep(5 * time.Second)
 
 	// Get the page content and parse with goquery
 	content, err := page.Content()

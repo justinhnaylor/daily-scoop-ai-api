@@ -56,10 +56,12 @@ RUN go build -v -o app && \
 RUN go build -v -o /usr/local/bin/playwright github.com/playwright-community/playwright-go/cmd/playwright
 RUN playwright install --with-deps chromium
 
-# Add environment variables for headless browser
+# Add environment variables for headless browser and debugging
 ENV DISPLAY=:99
 ENV PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
+ENV DEBUG=pw:api
+ENV PWDEBUG=1
 
-# Start Xvfb in the background and run the application
-ENTRYPOINT ["/bin/sh", "-c", "Xvfb :99 -screen 0 1024x768x16 & /app/app $@"]
+# Start Xvfb with larger screen and more color depth
+ENTRYPOINT ["/bin/sh", "-c", "Xvfb :99 -screen 0 1920x1080x24 & /app/app $@"]
 CMD ["-mode=${MODE}"]
