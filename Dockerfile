@@ -18,20 +18,26 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy go.mod and go.sum first
-COPY go.mod go.sum ./
+# Debug: List contents before copy
+RUN pwd && ls -la
 
-# More verbose module download
-RUN go mod download -x || (echo "Module download failed" && exit 1)
-
-# Copy the rest of the code
+# Copy entire project first
 COPY . .
 
-# Install Playwright with verbose output
+# Debug: List contents after copy
+RUN pwd && ls -la
+
+# Initialize module if needed
+RUN if [ ! -f go.mod ]; then go mod init main; fi
+
+# Download dependencies with debug output
+RUN go mod tidy -v
+
+# Install Playwright
 RUN go build -v -o /usr/local/bin/playwright github.com/playwright-community/playwright-go/cmd/playwright
 RUN playwright install --with-deps chromium
 
-# Build the app with verbose output
+# Build the app
 RUN go build -v -o app
 
 CMD ["./app"] 
