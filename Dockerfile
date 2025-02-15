@@ -5,7 +5,7 @@ ARG MODE=daily
 
 # Install system dependencies including libvips
 RUN apt-get update && apt-get install -y \
-   libnss3 \
+    libnss3 \
     libnspr4 \
     libatk1.0-0 \
     libatk-bridge2.0-0 \
@@ -23,14 +23,13 @@ RUN apt-get update && apt-get install -y \
     # Add these new dependencies
     libxcursor1 \
     libgtk-3-0 \
-    libgdk-3-0 \
+    libgdk-pixbuf2.0-0 \
     # Additional dependencies that might be needed
     libx11-xcb1 \
     libxcb1 \
     libxss1 \
     libxtst6 \
     libnss3-dev \
-    libgconf-2-4 \
     libpango-1.0-0 \
     libcairo2 \
     fonts-liberation \
