@@ -59,9 +59,11 @@ RUN playwright install --with-deps chromium
 # Add environment variables for headless browser and debugging
 ENV DISPLAY=:99
 ENV PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
-ENV DEBUG=pw:api
-ENV PWDEBUG=1
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
-# Start Xvfb with larger screen and more color depth
-ENTRYPOINT ["/bin/sh", "-c", "Xvfb :99 -screen 0 1920x1080x24 & /app/app $@"]
-CMD ["-mode=${MODE}"]
+# Create a startup script
+RUN echo '#!/bin/sh\nXvfb :99 -screen 0 1280x1024x24 &\nsleep 1\nexec "$@"' > /start.sh && \
+    chmod +x /start.sh
+
+ENTRYPOINT ["/start.sh"]
+CMD ["/app/app", "-mode=${MODE}"]
