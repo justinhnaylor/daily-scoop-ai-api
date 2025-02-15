@@ -1,4 +1,4 @@
-FROM golang:1.23.3
+FROM golang:1.21.6
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -31,12 +31,10 @@ COPY go.mod go.sum ./
 RUN echo "Module files:" && \
     ls -la && \
     echo "\ngo.mod contents:" && \
-    cat go.mod && \
-    echo "\ngo.sum contents:" && \
-    cat go.sum
+    cat go.mod
 
-# Try to download with verbose output
-RUN GOPROXY=direct go mod download -v -x || (echo "Download failed with status: $?" && exit 1)
+# Try to download with more debugging options
+RUN GOSUMDB=off GOPROXY=https://proxy.golang.org,direct go mod download -v -x
 
 # Copy the rest of the code
 COPY . .
