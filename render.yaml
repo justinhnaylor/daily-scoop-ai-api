@@ -1,0 +1,32 @@
+services:
+  - type: cron
+    name: trending-topics-daily
+    runtime: go
+    schedule: "0 8 * * *"
+    buildCommand: go build -o app
+    startCommand: ./app -mode=daily
+    envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: GOOGLE_SEARCH_ENGINE_ID
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+
+  - type: cron
+    name: trending-topics-recent
+    runtime: go
+    schedule: "0 */2 * * *"
+    buildCommand: go build -o app
+    startCommand: ./app -mode=recent
+    envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: GOOGLE_SEARCH_ENGINE_ID
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
