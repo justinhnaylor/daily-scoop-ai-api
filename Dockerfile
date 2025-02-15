@@ -17,10 +17,15 @@ RUN apt-get update && apt-get install -y \
     libasound2
 
 WORKDIR /app
+
+# Copy go.mod and go.sum first to leverage Docker cache
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy the rest of the code
 COPY . .
 
-# Install dependencies and Playwright
-RUN go mod download
+# Install Playwright
 RUN go build -o /usr/local/bin/playwright github.com/playwright-community/playwright-go/cmd/playwright
 RUN playwright install --with-deps chromium
 
