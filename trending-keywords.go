@@ -24,8 +24,8 @@ type TrendingTopic struct {
 
 // Update constants at the top of the file
 const (
-	MAX_DAILY_TOPICS  = 1  // Or whatever number you want for daily
-	MAX_RECENT_TOPICS = 1  // Or whatever number you want for recent
+	MAX_DAILY_TOPICS  = 5  // Or whatever number you want for daily
+	MAX_RECENT_TOPICS = 5  // Or whatever number you want for recent
 )
 
 // GetTrendingKeywords fetches trending keywords from Google Trends using Playwright and Webshare proxies
