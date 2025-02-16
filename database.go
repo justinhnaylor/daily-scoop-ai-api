@@ -64,6 +64,12 @@ func NewSupabaseClient(dbURL, apiKey string) (*SupabaseClient, error) {
 }
 
 func (s *SupabaseClient) SaveArticle(article *GeneratedArticle, mediaAssets NewsMediaAssets) (*NewsArticle, error) {
+	// Ensure the original keyword is included in the keywords array
+	keywords := article.Keywords
+	if !contains(keywords, article.Keyword) {
+		keywords = append([]string{article.Keyword}, keywords...)
+	}
+
 	newsArticle := &NewsArticle{
 		ID:           uuid.New(),
 		Title:        article.Title,
@@ -73,7 +79,7 @@ func (s *SupabaseClient) SaveArticle(article *GeneratedArticle, mediaAssets News
 		AudioUrl:     &mediaAssets.AudioPath,
 		AuthorId:     "a66dd82e-9e8e-44e8-94fa-825dd1cd2f7c",
 		CategoryId:   &article.CategoryId,
-		Keywords:     pq.StringArray(article.Keywords),
+		Keywords:     pq.StringArray(keywords),
 		Published:    true,
 		URLTitle:     article.URLTitle,
 	}
@@ -83,6 +89,16 @@ func (s *SupabaseClient) SaveArticle(article *GeneratedArticle, mediaAssets News
 	}
 
 	return newsArticle, nil
+}
+
+// Helper function to check if a string slice contains a value
+func contains(slice []string, str string) bool {
+	for _, v := range slice {
+		if v == str {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *SupabaseClient) CheckSimilarKeywords(keyword string, hours int) (bool, error) {

@@ -42,7 +42,7 @@ func GetSearchResults(topics []TrendingTopic) ([]SearchResult, error) {
 		params.Add("key", apiKey)
 		params.Add("cx", searchEngineID)
 		params.Add("q", topic.Keyword + " news")
-		params.Add("num", "7")
+		params.Add("num", "3")
 		params.Add("dateRestrict", "d1") 
 		params.Add("orderBy", "relevance")
 

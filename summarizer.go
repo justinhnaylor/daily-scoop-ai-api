@@ -1,18 +1,20 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log" // Using standard log package for simplicity
-	"os"
+	"log"
 	"os/exec"
-	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
 
-// ... (SummarizationRequest, init, checkPythonDependencies, createPythonScript - remain the same) ...
+type SummarizationRequest struct {
+	Content string
+}
 
 func SummarizeArticles(articles []ArticleContent) (map[string]string, error) {
 	summaries := make(map[string]string)
@@ -21,11 +23,8 @@ func SummarizeArticles(articles []ArticleContent) (map[string]string, error) {
 	batchSize := 10
 	maxContentLength := 60000
 
-	pythonPath := filepath.Join(".venv", "bin", "python3")
-	scriptPath := filepath.Join(os.TempDir(), "summarizer.py")
-
 	for i := 0; i < len(articles); i += batchSize {
-		startBatchTime := time.Now() // Time batch processing
+		startBatchTime := time.Now()
 		end := i + batchSize
 		if end > len(articles) {
 			end = len(articles)
@@ -43,7 +42,9 @@ func SummarizeArticles(articles []ArticleContent) (map[string]string, error) {
 					return
 				}
 
-				cmd := exec.Command(pythonPath, scriptPath)
+				log.Printf("DEBUG: Starting summarization for article: %s", article.Title)
+
+				cmd := exec.Command("python3", "summarizer.py")
 				stdin, err := cmd.StdinPipe()
 				if err != nil {
 					log.Printf("ERROR: Error creating stdin pipe for %s - URL: %s, Error: %v", article.Title, article.URL, err)
@@ -70,41 +71,80 @@ func SummarizeArticles(articles []ArticleContent) (map[string]string, error) {
 					errorChan <- err
 					return
 				}
-				log.Printf("DEBUG: Processing article: %s - URL: %s", article.Title, article.URL) // Debug log
+				log.Printf("DEBUG: Processing article: %s - URL: %s", article.Title, article.URL)
 
+				// Create a channel for Python script output
+				stderrChan := make(chan string, 100)
+
+				// Read stderr in a goroutine
+				go func() {
+					scanner := bufio.NewScanner(stderr)
+					for scanner.Scan() {
+						debugMsg := scanner.Text()
+						stderrChan <- debugMsg
+						
+						var logMsg map[string]interface{}
+						if err := json.Unmarshal([]byte(debugMsg), &logMsg); err == nil {
+							if debug, ok := logMsg["debug"].(string); ok {
+								log.Printf("DEBUG (Python - %s): %s", article.URL, debug)
+							} else if errMsg, ok := logMsg["error"].(string); ok {
+								log.Printf("ERROR (Python - %s): %s", article.URL, errMsg)
+							}
+						}
+					}
+					close(stderrChan)
+				}()
+
+				// Write content length followed by content
 				fmt.Fprintf(stdin, "%d\n", len(article.Content))
 				fmt.Fprint(stdin, article.Content)
 				stdin.Close()
 
-				go func() { // Goroutine to read stderr
-					buf := make([]byte, 1024)
-					for {
-						n, err := stderr.Read(buf)
-						if n > 0 {
-							log.Printf("DEBUG (Python - %s): %s", article.URL, string(buf[:n])) // Python stderr output
-						}
-						if err != nil {
-							if err != io.EOF {
-								log.Printf("ERROR: Error reading stderr for %s - URL: %s, Error: %v", article.Title, article.URL, err)
-							}
-							break
-						}
-					}
-				}()
-
+				// Read the output
 				output, err := io.ReadAll(stdout)
 				if err != nil {
-					log.Printf("ERROR: Error reading output for %s - URL: %s, Error: %v", article.Title, article.URL, err)
-					errorChan <- err
+					// Collect any error messages from stderr
+					var stderrMsgs []string
+					for msg := range stderrChan {
+						stderrMsgs = append(stderrMsgs, msg)
+					}
+					errorDetail := strings.Join(stderrMsgs, "\n")
+					log.Printf("ERROR: Error reading output for %s - URL: %s, Error: %v\nPython Error Details:\n%s", 
+						article.Title, article.URL, err, errorDetail)
+					errorChan <- fmt.Errorf("failed to read output: %v (Python errors: %s)", err, errorDetail)
 					return
 				}
+
+				// Collect any error messages from stderr before checking cmd.Wait()
+				var stderrMsgs []string
+				for msg := range stderrChan {
+					stderrMsgs = append(stderrMsgs, msg)
+				}
+				errorDetail := strings.Join(stderrMsgs, "\n")
 
 				if err := cmd.Wait(); err != nil {
-					log.Printf("ERROR: Command failed for %s - URL: %s, Error: %v", article.Title, article.URL, err)
-					errorChan <- err
+					log.Printf("ERROR: Command failed for %s - URL: %s, Error: %v\nPython Error Details:\n%s", 
+						article.Title, article.URL, err, errorDetail)
+					if errorDetail != "" {
+						errorChan <- fmt.Errorf("command failed: %v (Python errors: %s)", err, errorDetail)
+					} else {
+						errorChan <- fmt.Errorf("command failed: %v", err)
+					}
 					return
 				}
 
+				// Only proceed with JSON parsing if we have output
+				if len(output) == 0 {
+					errorMsg := "No output received from Python script"
+					if errorDetail != "" {
+						errorMsg = fmt.Sprintf("%s\nPython Error Details:\n%s", errorMsg, errorDetail)
+					}
+					log.Printf("ERROR: %s for %s - URL: %s", errorMsg, article.Title, article.URL)
+					errorChan <- fmt.Errorf(errorMsg)
+					return
+				}
+
+				// Try to parse the JSON output
 				var result struct {
 					Success bool   `json:"success"`
 					Summary string `json:"summary"`
@@ -112,19 +152,24 @@ func SummarizeArticles(articles []ArticleContent) (map[string]string, error) {
 				}
 
 				if err := json.Unmarshal(output, &result); err != nil {
-					log.Printf("ERROR: Error parsing JSON result for %s - URL: %s, Error: %v, Output: %s", article.Title, article.URL, err, string(output))
-					errorChan <- err
+					log.Printf("ERROR: Failed to parse JSON output for %s - URL: %s\nOutput: %s\nError: %v", 
+						article.Title, article.URL, string(output), err)
+					errorChan <- fmt.Errorf("failed to parse JSON output: %v (output: %s)", err, string(output))
 					return
 				}
 
-				if result.Success {
-					mutex.Lock()
-					summaries[article.URL] = result.Summary
-					mutex.Unlock()
-					log.Printf("INFO: Successfully summarized article: %s - URL: %s", article.Title, article.URL)
-				} else if result.Error != "" {
-					log.Printf("WARNING: Summarization failed for %s - URL: %s, Error: %s", article.Title, article.URL, result.Error)
+				if !result.Success {
+					errorMsg := fmt.Sprintf("Summarization failed: %s", result.Error)
+					log.Printf("ERROR: %s for %s - URL: %s", errorMsg, article.Title, article.URL)
+					errorChan <- fmt.Errorf(errorMsg)
+					return
 				}
+
+				// Store the summary with mutex lock
+				mutex.Lock()
+				summaries[article.URL] = result.Summary
+				mutex.Unlock()
+				log.Printf("INFO: Successfully summarized article: %s - URL: %s", article.Title, article.URL)
 
 			}(articles[j])
 		}
@@ -138,7 +183,7 @@ func SummarizeArticles(articles []ArticleContent) (map[string]string, error) {
 			}
 		}
 		batchDuration := time.Since(startBatchTime)
-		log.Printf("INFO: Processed batch of %d articles in %v", (end - i), batchDuration) // Log batch processing time
+		log.Printf("INFO: Processed batch of %d articles in %v", (end - i), batchDuration)
 	}
 
 	return summaries, nil

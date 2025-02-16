@@ -115,7 +115,7 @@ Summaries of source articles:
 		Title:      result.Title,
 		Article:    result.Article,
 		Keyword:    keyword,
-		Keywords:   result.Keywords,
+		Keywords:   append([]string{keyword}, result.Keywords...),
 		CategoryId: result.CategoryId,
 		URLTitle:   result.URLTitle,
 	}
