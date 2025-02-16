@@ -2,18 +2,13 @@ import os
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = '1'
 
-import google.generativeai as genai
-from google.generativeai import types
+from google import genai
+from google.genai import types
 from PIL import Image
-import base64
-from io import BytesIO
 import sys
 import json
 import warnings
 warnings.filterwarnings("ignore")
-
-print(json.dumps({"debug": "Python path: " + str(sys.path)}), file=sys.stderr)
-print(json.dumps({"debug": "Imported packages successfully"}), file=sys.stderr)
 
 def generate_image(prompt, output_path):
     try:
@@ -23,8 +18,10 @@ def generate_image(prompt, output_path):
             print(json.dumps({"error": "IMAGEN_API_KEY not found in environment"}), file=sys.stderr)
             return False
             
-        print(json.dumps({"debug": f"Using API key starting with: {api_key[:4]}..."}), file=sys.stderr)
-        genai.configure(api_key=api_key)
+        print(json.dumps({"debug": "API key configured"}), file=sys.stderr)
+        
+        # Create client with only API key
+        client = genai.Client(api_key=api_key)
         
         # Structure the prompt for better results
         formatted_prompt = f"""Create a photorealistic news article image:
@@ -33,44 +30,38 @@ The image should be high-quality, professional, and suitable for a news website.
 
         print(json.dumps({"debug": "Calling Imagen API"}), file=sys.stderr)
         try:
-            # Generate the image using the correct API format
-            model = genai.GenerativeModel('imagen-3.0-generate-002')
-            response = model.generate_images(
+            # Generate the image using the client
+            response = client.models.generate_images(
+                model='imagen-3.0-generate-002',
                 prompt=formatted_prompt,
-                number_of_images=1
+                config=types.GenerateImagesConfig(
+                    number_of_images=1,
+                    aspect_ratio="16:9",
+                    safety_filter_level="BLOCK_LOW_AND_ABOVE",
+                    person_generation="ALLOW_ADULT"
+                )
             )
-            print(json.dumps({"debug": f"Response received: {response}"}), file=sys.stderr)
             
-        except Exception as api_error:
-            print(json.dumps({"error": f"Image generation failed: {str(api_error)}"}), file=sys.stderr)
-            return False
-
-        # Save the generated image
-        if response and hasattr(response, 'generated_images') and response.generated_images:
-            try:
-                # Get the image data from the response
-                image_data = response.generated_images[0].image.image_bytes
-                if not image_data:
-                    print(json.dumps({"error": "Image data is empty"}), file=sys.stderr)
-                    return False
-                    
-                print(json.dumps({"debug": f"Image data length: {len(image_data)}"}), file=sys.stderr)
+            if response.generated_images:
+                # Get the directory path
+                output_dir = os.path.dirname(output_path)
                 
-                # Ensure the output directory exists
-                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                # Create directory if it doesn't exist and path is not empty
+                if output_dir:
+                    os.makedirs(output_dir, exist_ok=True)
                 
-                # Save the image
-                with open(output_path, 'wb') as f:
-                    f.write(image_data)
+                # Get the PIL image and save it
+                image = response.generated_images[0].image._pil_image
+                image.save(output_path)
                 
                 print(json.dumps({"success": True, "path": output_path}))
                 return True
-                
-            except Exception as save_error:
-                print(json.dumps({"error": f"Failed to save image: {str(save_error)}"}), file=sys.stderr)
-                return False
-        else:
-            print(json.dumps({"error": f"No image data in response. Response structure: {dir(response)}"}), file=sys.stderr)
+            
+            print(json.dumps({"error": "No images generated in response"}), file=sys.stderr)
+            return False
+            
+        except Exception as api_error:
+            print(json.dumps({"error": f"Image generation failed: {str(api_error)}"}), file=sys.stderr)
             return False
 
     except Exception as e:
