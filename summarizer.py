@@ -7,6 +7,11 @@ import os
 import time
 import threading
 
+# Update these constants at the top of the file
+MAX_TOKENS_PER_CHUNK = 150  # Reduced from 200
+MAX_CHUNKS = 8  # Reduced from 12
+MAX_TEXT_LENGTH = 30000  # Reduced from 50000
+
 def check_and_install_dependencies():
     required_packages = {
         'setuptools': 'setuptools',  # Install setuptools first
@@ -134,52 +139,52 @@ def split_text_into_chunks(text):
             initialize_summarizer()
 
         # Add maximum text length limit
-        max_chars = 50000  # Limit to ~50K characters
-        if len(text) > max_chars:
-            text = text[:max_chars]
-            print(json.dumps({"warning": f"Text truncated to {max_chars} characters"}), file=sys.stderr)
+        if len(text) > MAX_TEXT_LENGTH:
+            text = text[:MAX_TEXT_LENGTH]
+            print(json.dumps({"warning": f"Text truncated to {MAX_TEXT_LENGTH} characters"}), file=sys.stderr)
 
         # Clean the input text
         text = text.strip()
         if not text:
             raise ValueError("Empty text provided")
 
-        # Reduce chunk size and limit total chunks
-        max_tokens = 200  # Further reduced from 250
-        max_chunks = 12   # Maximum number of chunks to process
-
-        # Split by sentences and paragraphs
+        # Split by paragraphs first
         paragraphs = text.split('\n\n')
+        
+        # Take only the most relevant paragraphs (beginning and end)
+        if len(paragraphs) > MAX_CHUNKS * 2:
+            paragraphs = paragraphs[:MAX_CHUNKS] + paragraphs[-2:]
+        
         chunks = []
         current_chunk = []
         current_length = 0
 
         for paragraph in paragraphs:
-            if len(chunks) >= max_chunks:
-                print(json.dumps({"warning": f"Reached maximum chunk limit of {max_chunks}"}), file=sys.stderr)
+            if len(chunks) >= MAX_CHUNKS:
                 break
 
+            # Split into sentences
             sentences = paragraph.replace("? ", "?\n").replace("! ", "!\n").replace(". ", ".\n").split("\n")
             
             for sentence in sentences:
-                if len(chunks) >= max_chunks:
-                    break
-
                 if not sentence.strip():
                     continue
 
                 tokens = tokenizer(sentence, return_tensors="pt", truncation=True, max_length=512)
                 sentence_length = len(tokens['input_ids'][0])
 
-                if current_length + sentence_length > max_tokens and current_chunk:
+                if current_length + sentence_length > MAX_TOKENS_PER_CHUNK and current_chunk:
                     chunks.append(" ".join(current_chunk))
                     current_chunk = []
                     current_length = 0
+                    
+                    if len(chunks) >= MAX_CHUNKS:
+                        break
 
                 current_chunk.append(sentence)
                 current_length += sentence_length
 
-        if current_chunk and len(chunks) < max_chunks:
+        if current_chunk and len(chunks) < MAX_CHUNKS:
             chunks.append(" ".join(current_chunk))
 
         return chunks
@@ -195,43 +200,26 @@ def calculate_summary_length(text_length):
     return target_length, min_length
 
 def process_chunk(chunk):
-    max_retries = 3
-    retry_delay = 5
+    max_retries = 1  # Reduced from 3
+    retry_delay = 3  # Reduced from 5
     
     for attempt in range(max_retries):
         try:
-            # Clear CUDA cache if available before processing
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            
             if not chunk.strip():
-                print(json.dumps({"debug": "Empty chunk detected"}), file=sys.stderr)
                 return ""
 
-            # Reduce chunk processing complexity
-            tokens = tokenizer(chunk, return_tensors="pt", truncation=True, max_length=512)
-            chunk_token_length = len(tokens['input_ids'][0])
-
-            max_length = min(int(chunk_token_length * 0.4), 150)  # More aggressive length reduction
+            # More aggressive length reduction
+            max_length = min(int(len(chunk.split()) * 0.3), 100)  # Reduced from 150
             min_length = max(20, int(max_length * 0.5))
 
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                with model_lock:
-                    try:
-                        # Simplified generation parameters for faster processing
-                        summary = summarizer(chunk,
-                                          max_length=max_length,
-                                          min_length=min_length,
-                                          do_sample=False,
-                                          num_beams=1,  # Reduced from default
-                                          length_penalty=1.0,
-                                          early_stopping=True)
-                    except Exception as model_error:
-                        print(json.dumps({
-                            "error": f"Model inference error (attempt {attempt + 1}): {str(model_error)}"
-                        }), file=sys.stderr)
-                        raise
+            with model_lock:
+                summary = summarizer(chunk,
+                                  max_length=max_length,
+                                  min_length=min_length,
+                                  do_sample=False,
+                                  num_beams=1,
+                                  length_penalty=1.0,
+                                  early_stopping=True)
 
             if not summary or not summary[0].get('summary_text'):
                 raise ValueError("Empty summary generated")
@@ -240,10 +228,8 @@ def process_chunk(chunk):
             
         except Exception as e:
             if attempt == max_retries - 1:
-                raise
-            print(json.dumps({
-                "warning": f"Retry attempt {attempt + 1} after error: {str(e)}"
-            }), file=sys.stderr)
+                print(json.dumps({"warning": f"Skipping chunk after failure: {str(e)}"}), file=sys.stderr)
+                return None
             time.sleep(retry_delay)
             continue
 
@@ -272,26 +258,31 @@ def summarize_text(text):
 
         # Process chunks with longer timeout
         summaries = []
-        chunk_errors = []
+        failed_chunks = 0
         with ThreadPoolExecutor(max_workers=1) as executor:
             futures = [executor.submit(process_chunk, chunk) for chunk in chunks]
             for i, future in enumerate(futures):
                 try:
                     summary = future.result(timeout=300)  
-                    if summary:
+                    if summary is None:  # Chunk processing failed
+                        failed_chunks += 1
+                        if failed_chunks >= 2:  # If 2 or more chunks fail, abandon the summary
+                            return {"success": False, "error": "Too many chunks failed to process"}
+                        continue
+                    if summary:  # Only append non-empty summaries
                         summaries.append(summary)
                     # Clear memory after each chunk
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
                 except TimeoutError:
-                    error_msg = f"Chunk {i} timed out after 180 seconds"
-                    print(json.dumps({"error": error_msg}), file=sys.stderr)
-                    chunk_errors.append(error_msg)
+                    failed_chunks += 1
+                    if failed_chunks >= 2:  # If 2 or more chunks fail, abandon the summary
+                        return {"success": False, "error": "Too many chunks timed out"}
+                    print(json.dumps({"warning": f"Skipping chunk {i} due to timeout"}), file=sys.stderr)
                     continue 
 
         if not summaries:
-            error_details = "; ".join(chunk_errors) if chunk_errors else "No valid summaries generated"
-            return {"success": False, "error": error_details}
+            return {"success": False, "error": "No valid summaries generated"}
 
         final_summary = " ".join(summaries)
         if not final_summary.strip():
