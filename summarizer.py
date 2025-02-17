@@ -133,13 +133,20 @@ def split_text_into_chunks(text):
         if tokenizer is None:
             initialize_summarizer()
 
+        # Add maximum text length limit
+        max_chars = 50000  # Limit to ~50K characters
+        if len(text) > max_chars:
+            text = text[:max_chars]
+            print(json.dumps({"warning": f"Text truncated to {max_chars} characters"}), file=sys.stderr)
+
         # Clean the input text
         text = text.strip()
         if not text:
             raise ValueError("Empty text provided")
 
-        # Reduce chunk size significantly
-        max_tokens = 250  # Further reduced from 300
+        # Reduce chunk size and limit total chunks
+        max_tokens = 200  # Further reduced from 250
+        max_chunks = 12   # Maximum number of chunks to process
 
         # Split by sentences and paragraphs
         paragraphs = text.split('\n\n')
@@ -148,9 +155,16 @@ def split_text_into_chunks(text):
         current_length = 0
 
         for paragraph in paragraphs:
+            if len(chunks) >= max_chunks:
+                print(json.dumps({"warning": f"Reached maximum chunk limit of {max_chunks}"}), file=sys.stderr)
+                break
+
             sentences = paragraph.replace("? ", "?\n").replace("! ", "!\n").replace(". ", ".\n").split("\n")
             
             for sentence in sentences:
+                if len(chunks) >= max_chunks:
+                    break
+
                 if not sentence.strip():
                     continue
 
@@ -165,7 +179,7 @@ def split_text_into_chunks(text):
                 current_chunk.append(sentence)
                 current_length += sentence_length
 
-        if current_chunk:
+        if current_chunk and len(chunks) < max_chunks:
             chunks.append(" ".join(current_chunk))
 
         return chunks
@@ -236,8 +250,8 @@ def process_chunk(chunk):
 def summarize_text(text):
     try:
         # Add maximum text length limit
-        if len(text) > 100000:  # About 100KB
-            return {"success": False, "error": "Text too long for summarization"}
+        if len(text) > 50000:  # Reduced from 100KB to 50KB
+            return {"success": False, "error": "Text too long for summarization (max 50KB)"}
 
         if not text or not text.strip():
             return {"success": False, "error": "Empty or invalid input text"}
