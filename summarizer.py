@@ -11,6 +11,7 @@ import threading
 MAX_TOKENS_PER_CHUNK = 150  # Reduced from 200
 MAX_CHUNKS = 8  # Reduced from 12
 MAX_TEXT_LENGTH = 30000  # Reduced from 50000
+MAX_CONCURRENT_PROCESSES = 2  # New constant for process limiting
 
 def check_and_install_dependencies():
     required_packages = {
@@ -50,6 +51,7 @@ warnings.filterwarnings("ignore")
 
 # Global variables with thread lock
 model_lock = threading.Lock()
+process_semaphore = threading.BoundedSemaphore(MAX_CONCURRENT_PROCESSES)  # Add semaphore
 summarizer = None
 tokenizer = None
 
@@ -65,7 +67,7 @@ def initialize_summarizer():
                     torch_dtype = torch.float16 if device == "mps" else torch.float32
 
                     # Use user's cache directory for persistence
-                    cache_dir = os.path.expanduser('~/.cache/huggingface')
+                    cache_dir = os.path.expanduser('~/.cache/huggingface') # User cache directory
                     os.environ['HF_HOME'] = cache_dir
                     os.environ['TRANSFORMERS_CACHE'] = cache_dir
 
@@ -80,7 +82,7 @@ def initialize_summarizer():
                                                           trust_remote_code=True,
                                                           cache_dir=cache_dir,
                                                           torch_dtype=torch_dtype,
-                                                          force_download=True)
+                                                          force_download=True)  # Force fresh download
                     except Exception as e:
                         if "not a valid JSON file" in str(e):
                             print(json.dumps({"debug": "Clearing corrupted cache and retrying"}), file=sys.stderr)
@@ -95,7 +97,7 @@ def initialize_summarizer():
                                                               cache_dir=cache_dir,
                                                               torch_dtype=torch_dtype)
 
-                    # Add memory optimization settings with increased RAM
+                    # Add memory optimization settings
                     model = AutoModelForSeq2SeqLM.from_pretrained(
                         model_name,
                         config=config,
@@ -104,8 +106,8 @@ def initialize_summarizer():
                         cache_dir=cache_dir,
                         torch_dtype=torch_dtype,
                         load_in_8bit=False,
-                        max_memory={0: "8GB"},  # Increased from 4GB to 8GB
-                        low_cpu_mem_usage=False  # Changed to False to allow more memory usage
+                        max_memory={0: "1GB"},  
+                        low_cpu_mem_usage=True  
                     )
                     
                     # Clear CUDA cache if available
@@ -119,15 +121,16 @@ def initialize_summarizer():
                         cache_dir=cache_dir,
                     )
 
+
                     summarizer = pipeline("summarization",
                                         model=model,
                                         tokenizer=tokenizer,
                                         device=device)
-                    print(json.dumps({"debug": f"Model loaded with dtype: {model.dtype if hasattr(model, 'dtype') else 'unknown'}"}), file=sys.stderr)
+                    print(json.dumps({"debug": f"Model loaded with dtype: {model.dtype if hasattr(model, 'dtype') else 'unknown'}"}), file=sys.stderr) # Debug log for dtype
 
                     print(json.dumps({"debug": "Summarizer initialized successfully"}), file=sys.stderr)
     except Exception as e:
-        print(json.dumps({"error": f"Failed to initialize summarizer: {str(e)} (Simplified error message)"}), file=sys.stderr)
+        print(json.dumps({"error": f"Failed to initialize summarizer: {str(e)} (Simplified error message)"}), file=sys.stderr) # Simplified error message
         raise
 
 def split_text_into_chunks(text):
@@ -156,46 +159,36 @@ def split_text_into_chunks(text):
         
         chunks = []
         current_chunk = []
-        current_tokens = 0
-        estimated_tokens_per_char = 0.3  # Rough estimate of tokens per character
+        current_length = 0
 
         for paragraph in paragraphs:
             if len(chunks) >= MAX_CHUNKS:
                 break
 
-            # Split into sentences more efficiently
-            sentences = [s.strip() for s in paragraph.replace("? ", "?\n").replace("! ", "!\n").replace(". ", ".\n").split("\n")]
+            # Split into sentences
+            sentences = paragraph.replace("? ", "?\n").replace("! ", "!\n").replace(". ", ".\n").split("\n")
             
             for sentence in sentences:
-                if not sentence:
+                if not sentence.strip():
                     continue
 
-                # Use character length as a rough estimate for tokens
-                estimated_tokens = len(sentence) * estimated_tokens_per_char
+                tokens = tokenizer(sentence, return_tensors="pt", truncation=True, max_length=512)
+                sentence_length = len(tokens['input_ids'][0])
 
-                if current_tokens + estimated_tokens > MAX_TOKENS_PER_CHUNK and current_chunk:
-                    # Only tokenize when creating a chunk
-                    chunk_text = " ".join(current_chunk)
-                    tokens = tokenizer(chunk_text, return_tensors="pt", truncation=True, max_length=512)
-                    if len(tokens['input_ids'][0]) <= MAX_TOKENS_PER_CHUNK:
-                        chunks.append(chunk_text)
+                if current_length + sentence_length > MAX_TOKENS_PER_CHUNK and current_chunk:
+                    chunks.append(" ".join(current_chunk))
                     current_chunk = []
-                    current_tokens = 0
+                    current_length = 0
                     
                     if len(chunks) >= MAX_CHUNKS:
                         break
 
                 current_chunk.append(sentence)
-                current_tokens += estimated_tokens
+                current_length += sentence_length
 
-        # Handle the last chunk
         if current_chunk and len(chunks) < MAX_CHUNKS:
-            chunk_text = " ".join(current_chunk)
-            tokens = tokenizer(chunk_text, return_tensors="pt", truncation=True, max_length=512)
-            if len(tokens['input_ids'][0]) <= MAX_TOKENS_PER_CHUNK:
-                chunks.append(chunk_text)
+            chunks.append(" ".join(current_chunk))
 
-        print(json.dumps({"debug": f"Successfully created {len(chunks)} chunks"}), file=sys.stderr)
         return chunks
 
     except Exception as e:
@@ -244,63 +237,69 @@ def process_chunk(chunk):
 
 def summarize_text(text):
     try:
-        # Add maximum text length limit
-        if len(text) > 50000:  # Reduced from 100KB to 50KB
-            return {"success": False, "error": "Text too long for summarization (max 50KB)"}
+        with process_semaphore:  # Acquire semaphore before processing
+            # Add maximum text length limit
+            if len(text) > 50000:
+                return {"success": False, "error": "Text too long for summarization (max 50KB)"}
 
-        if not text or not text.strip():
-            return {"success": False, "error": "Empty or invalid input text"}
+            if not text or not text.strip():
+                return {"success": False, "error": "Empty or invalid input text"}
 
-        global summarizer
-        initialize_summarizer()
+            global summarizer
+            initialize_summarizer()
 
-        # Add input validation and cleaning
-        text = text.strip()
-        if len(text) < 50:  # Minimum length check
-            return {"success": False, "error": "Text too short for summarization"}
+            # Add input validation and cleaning
+            text = text.strip()
+            if len(text) < 50:  # Minimum length check
+                return {"success": False, "error": "Text too short for summarization"}
 
-        try:
-            chunks = split_text_into_chunks(text)
-            print(json.dumps({"debug": f"Split into {len(chunks)} chunks"}), file=sys.stderr)
-        except Exception as chunk_error:
-            return {"success": False, "error": f"Chunk splitting failed: {str(chunk_error)}"}
-
-        # Process chunks sequentially with more memory
-        summaries = []
-        failed_chunks = 0
-        for i, chunk in enumerate(chunks):
             try:
-                summary = process_chunk(chunk)
-                if summary is None:  # Chunk processing failed
-                    failed_chunks += 1
-                    if failed_chunks >= 2:  # If 2 or more chunks fail, abandon the summary
-                        return {"success": False, "error": "Too many chunks failed to process"}
-                    continue
-                if summary:  # Only append non-empty summaries
-                    summaries.append(summary)
-                # Clear memory after each chunk
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except Exception as e:
-                failed_chunks += 1
-                if failed_chunks >= 2:  # If 2 or more chunks fail, abandon the summary
-                    return {"success": False, "error": "Too many chunks failed to process"}
-                print(json.dumps({"warning": f"Skipping chunk {i} due to error: {str(e)}"}), file=sys.stderr)
-                continue
+                chunks = split_text_into_chunks(text)
+                print(json.dumps({"debug": f"Split into {len(chunks)} chunks"}), file=sys.stderr) # Simplified log
+            except Exception as chunk_error:
+                return {"success": False, "error": f"Chunk splitting failed: {str(chunk_error)}"}
 
-        if not summaries:
-            return {"success": False, "error": "No valid summaries generated"}
+            # Process chunks with longer timeout
+            summaries = []
+            failed_chunks = 0
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                futures = [executor.submit(process_chunk, chunk) for chunk in chunks]
+                for i, future in enumerate(futures):
+                    try:
+                        summary = future.result(timeout=300)  
+                        if summary is None:  # Chunk processing failed
+                            failed_chunks += 1
+                            if failed_chunks >= 2:  # If 2 or more chunks fail, abandon the summary
+                                return {"success": False, "error": "Too many chunks failed to process"}
+                            continue
+                        if summary:  # Only append non-empty summaries
+                            summaries.append(summary)
+                        # Clear memory after each chunk
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                    except TimeoutError:
+                        failed_chunks += 1
+                        if failed_chunks >= 2:  # If 2 or more chunks fail, abandon the summary
+                            return {"success": False, "error": "Too many chunks timed out"}
+                        print(json.dumps({"warning": f"Skipping chunk {i} due to timeout"}), file=sys.stderr)
+                        continue 
 
-        final_summary = " ".join(summaries)
-        if not final_summary.strip():
-            return {"success": False, "error": "Generated summary is empty"}
+            if not summaries:
+                return {"success": False, "error": "No valid summaries generated"}
 
-        return {"success": True, "summary": final_summary}
+            final_summary = " ".join(summaries)
+            if not final_summary.strip():
+                return {"success": False, "error": "Generated summary is empty"}
+
+            return {"success": True, "summary": final_summary}
 
     except Exception as e:
         error_msg = f"Error in summarize_text: {str(e)}"
         print(json.dumps({"error": error_msg}), file=sys.stderr)
         return {"success": False, "error": str(e)}
+    finally:
+        # The semaphore is automatically released when the with block exits
+        pass
 
 if __name__ == "__main__":
     print(json.dumps({"debug": "Starting summarizer script"}), file=sys.stderr)
