@@ -99,7 +99,7 @@ def initialize_summarizer():
                         cache_dir=cache_dir,
                         torch_dtype=torch_dtype,
                         load_in_8bit=False,
-                        max_memory={0: "6GB"},  
+                        max_memory={0: "512mb"},  
                         low_cpu_mem_usage=True  
                     )
                     
