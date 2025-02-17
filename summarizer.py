@@ -104,8 +104,8 @@ def initialize_summarizer():
                         cache_dir=cache_dir,
                         torch_dtype=torch_dtype,
                         load_in_8bit=False,
-                        max_memory={0: "4GB"},  # Increased from 1GB
-                        low_cpu_mem_usage=True  
+                        max_memory={0: "8GB"},  # Increased from 4GB to 8GB
+                        low_cpu_mem_usage=False  # Changed to False to allow more memory usage
                     )
                     
                     # Clear CUDA cache if available
