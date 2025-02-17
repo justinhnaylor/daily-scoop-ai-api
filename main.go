@@ -4,6 +4,7 @@ package main
 import (
 	"flag"
 	"log"
+	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/playwright-community/playwright-go"
@@ -39,6 +40,10 @@ func main() {
 	if err := initDB(); err != nil {
 		log.Fatalf("Error initializing database: %v", err)
 	}
+
+	go StartSummarizer()
+
+	time.Sleep(2 * time.Second)
 
 	// Install Playwright browsers
 	if err := playwright.Install(); err != nil {

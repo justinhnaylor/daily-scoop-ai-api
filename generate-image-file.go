@@ -29,10 +29,11 @@ func GetNewsImage(article GeneratedArticle) (string, error) {
 Generate a photorealistic image prompt for a prestigious news publication website, based on the following news article snippet. The prompt should adhere to these guidelines to ensure high quality and avoid policy violations:
 
 1. **Prioritize Photorealism:** The image must be photorealistic. Start with "A photo of...". Emphasize photography style.
-2. **Subject is Key & News-Driven:** The image subject must be relevant to the news article's theme.
-3. **Context Enhances Relevance:** Include context related to the news event (location, event, atmosphere, mood, style).
+2. **Subject is Key & News-Driven:** Focus on locations, objects, or general scenes relevant to the news story. Avoid specific people, political figures, or controversial subjects.
+3. **Context Enhances Relevance:** Include contextual elements like settings, time of day, weather, or relevant objects that capture the story's essence.
 4. **Style: Journalistic Photography:** Use a journalistic photography style with natural lighting, clear focus, and authentic details.
-5. **Image Quality Modifiers:** Include quality modifiers for professional, high-quality images (4K, HDR, professional photography).
+5. **Safe & Neutral Content:** Ensure the prompt generates appropriate, policy-compliant imagery focusing on symbolic or representative elements of the story.
+6. **Image Quality Modifiers:** Include quality modifiers for professional, high-quality images (4K, HDR, professional photography).
 
 Article Title: %s
 First Sentence: %s

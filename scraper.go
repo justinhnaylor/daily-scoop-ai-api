@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -51,6 +52,7 @@ func ScrapeArticles(searchResults []SearchResult) ([]ArticleContent, error) {
 		"x.com",
 		"tiktok.com",
 		"youtube.com",
+		"reddit.com",
 	}
 
 	totalURLs := 0
@@ -270,6 +272,61 @@ func ScrapeArticles(searchResults []SearchResult) ([]ArticleContent, error) {
 
 // cleanText removes extra whitespace and normalizes text (same as before)
 func cleanText(text string) string {
+	// Common phrases to remove (case insensitive)
+	boilerplate := []string{
+		"accept cookies",
+		"cookie policy",
+		"privacy policy",
+		"terms of service",
+		"terms and conditions",
+		"all rights reserved",
+		"subscribe to our newsletter",
+		"sign up for our newsletter",
+		"share this article",
+		"follow us on",
+		"advertisement",
+		"sponsored content",
+	}
+
+	// Remove lines containing boilerplate text
+	lines := strings.Split(text, "\n")
+	var cleanedLines []string
+	for _, line := range lines {
+		shouldKeep := true
+		lowerLine := strings.ToLower(line)
+		
+		// Skip empty or very short lines
+		if len(strings.TrimSpace(line)) < 4 {
+			continue
+		}
+		
+		// Skip lines with boilerplate content
+		for _, phrase := range boilerplate {
+			if strings.Contains(lowerLine, phrase) {
+				shouldKeep = false
+				break
+			}
+		}
+		
+		// Skip lines that are likely navigation items (short phrases with links)
+		if len(strings.Fields(line)) <= 3 && strings.Contains(line, "›") {
+			continue
+		}
+		
+		if shouldKeep {
+			cleanedLines = append(cleanedLines, line)
+		}
+	}
+	
+	// Rejoin the text and normalize whitespace
+	text = strings.Join(cleanedLines, " ")
 	text = strings.Join(strings.Fields(text), " ")
+	
+	// Remove repeated punctuation
+	text = regexp.MustCompile(`([.!?])\s*[$1]+`).ReplaceAllString(text, "$1")
+	
+	// Remove URLs
+	text = regexp.MustCompile(`https?://\S+`).ReplaceAllString(text, "")
+	
 	return strings.TrimSpace(text)
 }

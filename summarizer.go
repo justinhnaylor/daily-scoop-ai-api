@@ -188,3 +188,19 @@ func SummarizeArticles(articles []ArticleContent) (map[string]string, error) {
 
 	return summaries, nil
 }
+
+
+func StartSummarizer() {
+	log.Println("Starting Python summarizer pre-warming in background...")
+
+	cmd := exec.Command("python3", "summarizer.py")
+	cmd.Stderr = log.Writer()
+	cmd.Stdout = log.Writer()
+
+	if err := cmd.Start(); err != nil {
+		log.Printf("Error starting pre-warming script: %v", err)
+		return
+	}
+
+	log.Println("Python summarizer pre-warming started in background.")
+}
