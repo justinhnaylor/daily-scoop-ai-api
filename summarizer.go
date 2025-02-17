@@ -16,14 +16,16 @@ type SummarizationRequest struct {
 }
 
 func SummarizeArticles(articles []ArticleContent) (map[string]string, error) {
+	log.Printf("Starting summarization for %d articles", len(articles))
 	summaries := make(map[string]string)
 	var mutex sync.Mutex
 	maxContentLength := 60000
 
-	// Process articles sequentially instead of in batches
-	for _, article := range articles {
+	for i, article := range articles {
+		log.Printf("Processing article %d of %d: %s", i+1, len(articles), article.Title)
+		
 		if len(article.Content) > maxContentLength {
-			log.Printf("INFO: Skipping article (too long): %s - URL: %s", article.Title, article.URL)
+			log.Printf("INFO: Skipping article %d (too long): %s - URL: %s", i+1, article.Title, article.URL)
 			continue
 		}
 

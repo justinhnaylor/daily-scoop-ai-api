@@ -24,9 +24,14 @@ func GenerateArticleFromSummaries(keyword string, summaries map[string]string, u
 		return nil, fmt.Errorf("error filtering summaries: %v", err)
 	}
 
-	// Only proceed if we have at least one relevant summary
-	if len(relevantSummaries) == 0 {
-		return nil, fmt.Errorf("no relevant summaries found for keyword: %s", keyword)
+	// Log the number of summaries before and after filtering
+	fmt.Printf("Article generation for '%s': Original summaries: %d, Relevant summaries: %d\n",
+		keyword, len(summaries), len(relevantSummaries))
+
+	// Only proceed if we have at least two relevant summaries
+	if len(relevantSummaries) < 2 {
+		return nil, fmt.Errorf("insufficient relevant summaries found for keyword '%s': need at least 2, got %d", 
+			keyword, len(relevantSummaries))
 	}
 
 	// Use existing prompt but with filtered summaries
