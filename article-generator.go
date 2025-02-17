@@ -58,7 +58,7 @@ Summaries of source articles:
    - **Avoid markdown for emotional emphasis or subjective interpretation.** Use it only to highlight objective information.
 
 4. **Maintain Factual Accuracy and Neutrality:**
-   - **4 paragraphs max.**
+   - **3 paragraphs max.**
    - **First:** A clear, fact-based lead presenting the core finding.
    - **Second:**  Objective analysis, factual context, or data supporting the lead.
    - **Third:** Additional verifiable details or background information.

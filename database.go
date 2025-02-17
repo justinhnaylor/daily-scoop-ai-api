@@ -15,7 +15,7 @@ import (
 var dbClient DBClient
 
 type DBClient interface {
-	SaveArticle(article *GeneratedArticle, mediaAssets NewsMediaAssets) (*NewsArticle, error)
+	SaveArticle(article *GeneratedArticle, mediaAssets NewsMediaAssets, imageSuccess bool) (*NewsArticle, error)
 	CheckSimilarKeywords(keyword string, hours int) (bool, error)
 }
 
@@ -34,6 +34,7 @@ type NewsArticle struct {
 	UpdatedAt  time.Time     `gorm:"column:updatedAt"`
 	Published  bool          `gorm:"default:false"`
 	URLTitle   string        `gorm:"column:urlTitle"`
+	UseImage   bool          `gorm:"default:true"`
 }
 
 type User struct {
@@ -63,7 +64,7 @@ func NewSupabaseClient(dbURL, apiKey string) (*SupabaseClient, error) {
 	return &SupabaseClient{db: db}, nil
 }
 
-func (s *SupabaseClient) SaveArticle(article *GeneratedArticle, mediaAssets NewsMediaAssets) (*NewsArticle, error) {
+func (s *SupabaseClient) SaveArticle(article *GeneratedArticle, mediaAssets NewsMediaAssets, imageSuccess bool) (*NewsArticle, error) {
 	// Ensure the original keyword is included in the keywords array
 	keywords := article.Keywords
 	if !contains(keywords, article.Keyword) {
@@ -82,6 +83,7 @@ func (s *SupabaseClient) SaveArticle(article *GeneratedArticle, mediaAssets News
 		Keywords:     pq.StringArray(keywords),
 		Published:    true,
 		URLTitle:     article.URLTitle,
+		UseImage:     imageSuccess,
 	}
 
 	if err := s.db.Create(newsArticle).Error; err != nil {
@@ -190,18 +192,19 @@ func NewLocalDBClient() (*LocalDBClient, error) {
 	return &LocalDBClient{db: db}, nil
 }
 
-func (l *LocalDBClient) SaveArticle(article *GeneratedArticle, mediaAssets NewsMediaAssets) (*NewsArticle, error) {
+func (l *LocalDBClient) SaveArticle(article *GeneratedArticle, mediaAssets NewsMediaAssets, imageSuccess bool) (*NewsArticle, error) {
 	newsArticle := &NewsArticle{
-		ID:            uuid.New(),
-		Title:         article.Title,
-		Body:          article.Article,
-		ImageUrl:      &mediaAssets.ImagePath,
-		ThumbnailUrl:  &mediaAssets.ThumbnailPath,
-		AudioUrl:      &mediaAssets.AudioPath,
-		AuthorId:      "a66dd82e-9e8e-44e8-94fa-825dd1cd2f7c",
-		CategoryId:    &article.CategoryId,
-		Keywords:      pq.StringArray(article.Keywords),
-		Published:     true,
+		ID:           uuid.New(),
+		Title:        article.Title,
+		Body:         article.Article,
+		ImageUrl:     &mediaAssets.ImagePath,
+		ThumbnailUrl: &mediaAssets.ThumbnailPath,
+		AudioUrl:     &mediaAssets.AudioPath,
+		AuthorId:     "a66dd82e-9e8e-44e8-94fa-825dd1cd2f7c",
+		CategoryId:   &article.CategoryId,
+		Keywords:     pq.StringArray(article.Keywords),
+		Published:    true,
+		UseImage:     imageSuccess,
 	}
 
 	if err := l.db.Create(newsArticle).Error; err != nil {
