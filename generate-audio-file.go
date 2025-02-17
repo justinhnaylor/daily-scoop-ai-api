@@ -74,6 +74,9 @@ func GenerateAudioFileWithConfig(content string, config AudioBatchConfig) (strin
 }
 
 func generateAudioWithRetry(content string) (string, error) {
+	// Strip markdown tags before TTS processing
+	content = stripMarkdownTags(content)
+	
 	// Append the outro message
 	content = content + " I'm Daily Bot, and you're listening to Daily Scoop AI."
 
@@ -119,4 +122,29 @@ func generateAudioWithRetry(content string) (string, error) {
 	}
 
 	return outputPath, nil
+}
+
+// stripMarkdownTags removes custom markdown tags from the content
+func stripMarkdownTags(content string) string {
+	// Replace all opening and closing tags
+	replacements := map[string]string{
+		"[bold]": "",
+		"[/bold]": "",
+		"[italic]": "",
+		"[/italic]": "",
+		"[bold-italic]": "",
+		"[/bold-italic]": "",
+		"[underline-italic]": "",
+		"[/underline-italic]": "",
+		"[p]": " ",
+	}
+
+	for tag, replacement := range replacements {
+		content = strings.ReplaceAll(content, tag, replacement)
+	}
+
+	// Clean up any extra whitespace
+	content = strings.Join(strings.Fields(content), " ")
+	
+	return content
 } 
