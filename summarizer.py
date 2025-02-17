@@ -157,36 +157,46 @@ def split_text_into_chunks(text):
         
         chunks = []
         current_chunk = []
-        current_length = 0
+        current_tokens = 0
+        estimated_tokens_per_char = 0.3  # Rough estimate of tokens per character
 
         for paragraph in paragraphs:
             if len(chunks) >= MAX_CHUNKS:
                 break
 
-            # Split into sentences
-            sentences = paragraph.replace("? ", "?\n").replace("! ", "!\n").replace(". ", ".\n").split("\n")
+            # Split into sentences more efficiently
+            sentences = [s.strip() for s in paragraph.replace("? ", "?\n").replace("! ", "!\n").replace(". ", ".\n").split("\n")]
             
             for sentence in sentences:
-                if not sentence.strip():
+                if not sentence:
                     continue
 
-                tokens = tokenizer(sentence, return_tensors="pt", truncation=True, max_length=512)
-                sentence_length = len(tokens['input_ids'][0])
+                # Use character length as a rough estimate for tokens
+                estimated_tokens = len(sentence) * estimated_tokens_per_char
 
-                if current_length + sentence_length > MAX_TOKENS_PER_CHUNK and current_chunk:
-                    chunks.append(" ".join(current_chunk))
+                if current_tokens + estimated_tokens > MAX_TOKENS_PER_CHUNK and current_chunk:
+                    # Only tokenize when creating a chunk
+                    chunk_text = " ".join(current_chunk)
+                    tokens = tokenizer(chunk_text, return_tensors="pt", truncation=True, max_length=512)
+                    if len(tokens['input_ids'][0]) <= MAX_TOKENS_PER_CHUNK:
+                        chunks.append(chunk_text)
                     current_chunk = []
-                    current_length = 0
+                    current_tokens = 0
                     
                     if len(chunks) >= MAX_CHUNKS:
                         break
 
                 current_chunk.append(sentence)
-                current_length += sentence_length
+                current_tokens += estimated_tokens
 
+        # Handle the last chunk
         if current_chunk and len(chunks) < MAX_CHUNKS:
-            chunks.append(" ".join(current_chunk))
+            chunk_text = " ".join(current_chunk)
+            tokens = tokenizer(chunk_text, return_tensors="pt", truncation=True, max_length=512)
+            if len(tokens['input_ids'][0]) <= MAX_TOKENS_PER_CHUNK:
+                chunks.append(chunk_text)
 
+        print(json.dumps({"debug": f"Successfully created {len(chunks)} chunks"}), file=sys.stderr)
         return chunks
 
     except Exception as e:
