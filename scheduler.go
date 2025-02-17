@@ -125,7 +125,7 @@ func processTopics(topics []TrendingTopic, mode string) {
         }
 
         // Generate media assets
-        mediaAssets, err := GenerateMediaAssets(*article)
+        mediaAssets, imageSuccess, err := GenerateMediaAssets(*article)
         if err != nil {
             log.Printf("[%s trends] Error generating media assets for %s: %v", mode, keyword, err)
             continue
@@ -139,7 +139,7 @@ func processTopics(topics []TrendingTopic, mode string) {
         }
 
         // Save to database
-        savedArticle, err := dbClient.SaveArticle(article, uploadedAssets)
+        savedArticle, err := dbClient.SaveArticle(article, uploadedAssets, imageSuccess)
         if err != nil {
             log.Printf("[%s trends] Error saving article to database for %s: %v", mode, keyword, err)
             continue

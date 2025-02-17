@@ -56,7 +56,7 @@ def initialize_summarizer():
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     model_name = "sshleifer/distilbart-cnn-12-6"
-                    device = "mps" if torch.backends.mps.is_available() else "cpu"  # Correct MPS check
+                    device = "mps" if torch.backends.mps.is_available() else "cpu"
                     torch_dtype = torch.float16 if device == "mps" else torch.float32
 
                     # Use user's cache directory for persistence
@@ -90,44 +90,36 @@ def initialize_summarizer():
                                                               cache_dir=cache_dir,
                                                               torch_dtype=torch_dtype)
 
-                    # Initialize with retry logic
-                    max_retries = 3
-                    retry_delay = 5
-                    for attempt in range(max_retries):
-                        try:
-                            # Load model and tokenizer with cache_dir parameter and explicit timeout
-                            model = AutoModelForSeq2SeqLM.from_pretrained(
-                                model_name,
-                                config=config,
-                                local_files_only=False,
-                                trust_remote_code=True,
-                                cache_dir=cache_dir,
-                                torch_dtype=torch_dtype, # Use determined dtype
-                                load_in_8bit=False, # Ensure not loading in 8bit if not intended
-                                max_memory=None # Let PyTorch manage memory
-                            )
-                            tokenizer = AutoTokenizer.from_pretrained(
-                                model_name,
-                                local_files_only=False,
-                                trust_remote_code=True,
-                                cache_dir=cache_dir,
-                            )
+                    # Add memory optimization settings
+                    model = AutoModelForSeq2SeqLM.from_pretrained(
+                        model_name,
+                        config=config,
+                        local_files_only=False,
+                        trust_remote_code=True,
+                        cache_dir=cache_dir,
+                        torch_dtype=torch_dtype,
+                        load_in_8bit=False,
+                        max_memory={0: "6GB"},  
+                        low_cpu_mem_usage=True  
+                    )
+                    
+                    # Clear CUDA cache if available
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    
+                    tokenizer = AutoTokenizer.from_pretrained(
+                        model_name,
+                        local_files_only=False,
+                        trust_remote_code=True,
+                        cache_dir=cache_dir,
+                    )
 
-                            # Create pipeline without timeout parameter - pipeline timeout is less reliable, control in process_chunk
-                            summarizer = pipeline("summarization",
-                                                model=model,
-                                                tokenizer=tokenizer,
-                                                device=device)
-                            print(json.dumps({"debug": f"Model loaded with dtype: {model.dtype if hasattr(model, 'dtype') else 'unknown'}"}), file=sys.stderr) # Debug log for dtype
-                            break
-                        except Exception as e:
-                            if attempt == max_retries - 1:
-                                raise
-                            print(json.dumps({
-                                "warning": f"Attempt {attempt + 1} failed, retrying in {retry_delay} seconds: {str(e)}"
-                            }), file=sys.stderr)
-                            time.sleep(retry_delay)
-                            retry_delay *= 2  # Exponential backoff
+
+                    summarizer = pipeline("summarization",
+                                        model=model,
+                                        tokenizer=tokenizer,
+                                        device=device)
+                    print(json.dumps({"debug": f"Model loaded with dtype: {model.dtype if hasattr(model, 'dtype') else 'unknown'}"}), file=sys.stderr) # Debug log for dtype
 
                     print(json.dumps({"debug": "Summarizer initialized successfully"}), file=sys.stderr)
     except Exception as e:
@@ -146,8 +138,8 @@ def split_text_into_chunks(text):
         if not text:
             raise ValueError("Empty text provided")
 
-        # Target about 500 tokens per chunk (reduced from 600 to potentially avoid timeouts)
-        max_tokens = 500
+        # Reduce chunk size for better memory management
+        max_tokens = 300  # Reduced from 500
 
         # Roughly split by sentences first to avoid cutting mid-sentence
         sentences = text.replace("? ", "?\n").replace("! ", "!\n").replace(". ", ".\n").split("\n")
@@ -196,16 +188,17 @@ def calculate_summary_length(text_length):
 def process_chunk(chunk):
     max_retries = 3
     retry_delay = 5
+    chunk_timeout = 150 
     
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
-
     for attempt in range(max_retries):
         try:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
             global summarizer, tokenizer
             
-            # Add timeout handling for the entire chunk processing
-            start_time = time.time()
-            chunk_timeout = 120  # Increased to 120 seconds per chunk
+            # Get the device type
+            device = "mps" if torch.backends.mps.is_available() else "cpu"
             
             if not chunk.strip():
                 print(json.dumps({"debug": "Empty chunk detected"}), file=sys.stderr)
@@ -214,9 +207,8 @@ def process_chunk(chunk):
             tokens = tokenizer(chunk, return_tensors="pt", truncation=False)
             chunk_token_length = len(tokens['input_ids'][0])
 
-            # Reduce target summary length for faster processing
             max_length, min_length = calculate_summary_length(chunk_token_length)
-            max_length = int(max_length * 0.8)  # Reduce max length by 20%
+            max_length = int(max_length * 0.8)
 
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -227,7 +219,7 @@ def process_chunk(chunk):
                                                max_length=max_length,
                                                min_length=min_length,
                                                do_sample=False,
-                                               num_beams=1,  # Reduce beam search complexity
+                                               num_beams=1,
                                                temperature=0.7)
                     except Exception as model_error:
                         print(json.dumps({
@@ -252,6 +244,10 @@ def process_chunk(chunk):
 
 def summarize_text(text):
     try:
+        # Add maximum text length limit
+        if len(text) > 100000:  # About 100KB
+            return {"success": False, "error": "Text too long for summarization"}
+
         if not text or not text.strip():
             return {"success": False, "error": "Empty or invalid input text"}
 
@@ -276,17 +272,17 @@ def summarize_text(text):
             futures = [executor.submit(process_chunk, chunk) for chunk in chunks]
             for i, future in enumerate(futures):
                 try:
-                    summary = future.result(timeout=150)  # Increased to 150 seconds
+                    summary = future.result(timeout=180)  
                     if summary:
                         summaries.append(summary)
+                    # Clear memory after each chunk
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
                 except TimeoutError:
-                    error_msg = f"Chunk {i} timed out after 150 seconds"
+                    error_msg = f"Chunk {i} timed out after 180 seconds"
                     print(json.dumps({"error": error_msg}), file=sys.stderr)
                     chunk_errors.append(error_msg)
-                except Exception as e:
-                    error_msg = f"Chunk {i} error: {str(e)}"
-                    print(json.dumps({"error": error_msg}), file=sys.stderr)
-                    chunk_errors.append(error_msg)
+                    continue 
 
         if not summaries:
             error_details = "; ".join(chunk_errors) if chunk_errors else "No valid summaries generated"
