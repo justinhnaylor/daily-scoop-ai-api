@@ -87,10 +87,10 @@ Summaries of source articles:
 **Response Format:**
 {
     "title": "Fact-Based, Informative Headline",
-    "article": "Data indicates a [bold]significant shift[/bold] in key metrics. According to analyzed reports, *'The trend is undeniably towards [bold]X[/bold],'* experts confirm.[p]This development has [bold]measurable impacts[/bold] on sector Y.",
+    "article": "Data indicates [bold]significant shift[/bold] in key metrics. According to analyzed reports, [italic]'The trend is undeniably towards [bold]X[/bold],'[/italic] experts confirm.[p]This development has [bold]measurable impacts[/bold] on sector Y.",
     "keywords": ["objective keyword 1", "factual keyword 2", "neutral keyword 3"],
-    "categoryId": 9
-	 "urlTitle": "fact-based-informative-headline"
+    "categoryId": 9,
+    "urlTitle": "fact-based-informative-headline"
 }`
 
 	// Query Gemini API

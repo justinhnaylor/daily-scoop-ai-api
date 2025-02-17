@@ -34,7 +34,7 @@ type NewsArticle struct {
 	UpdatedAt  time.Time     `gorm:"column:updatedAt"`
 	Published  bool          `gorm:"default:false"`
 	URLTitle   string        `gorm:"column:urlTitle"`
-	UseImage   bool          `gorm:"default:true"`
+	UseImage   bool          `gorm:"column:useImage;default:true"`
 }
 
 type User struct {
