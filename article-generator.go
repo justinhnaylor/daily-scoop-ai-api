@@ -50,10 +50,11 @@ Summaries of source articles:
    - **No paraphrasing**—synthesize insights into a **factual and objective narrative**.
    - Use **active voice, precise language, and balanced pacing**.
    - Apply markdown **sparingly and functionally** for clarity only:
-     - **[bold]** for key data points or verifiable statistics
-     - *[italics]* for direct quotes from sources (if present and relevant)
-     - ***[bold-italics]*** for critical, undisputed facts
-     - _*[underline-italics]*_ for technical terms (used neutrally)
+     - [bold]text[/bold] for key data points or verifiable statistics
+     - [italic]text[/italic] for direct quotes from sources (if present and relevant)
+     - [bold-italic]text[/bold-italic] for critical, undisputed facts
+     - [underline-italic]text[/underline-italic] for technical terms (used neutrally)
+     - [p] for paragraph breaks (single tag, no closing tag needed)
    - **Avoid markdown for emotional emphasis or subjective interpretation.** Use it only to highlight objective information.
 
 4. **Maintain Factual Accuracy and Neutrality:**
