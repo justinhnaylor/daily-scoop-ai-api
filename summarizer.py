@@ -138,45 +138,40 @@ def split_text_into_chunks(text):
         if not text:
             raise ValueError("Empty text provided")
 
-        # Reduce chunk size for better memory management
-        max_tokens = 300  # Reduced from 500
+        # Reduce chunk size significantly
+        max_tokens = 250  # Further reduced from 300
 
-        # Roughly split by sentences first to avoid cutting mid-sentence
-        sentences = text.replace("? ", "?\n").replace("! ", "!\n").replace(". ", ".\n").split("\n")
-
+        # Split by sentences and paragraphs
+        paragraphs = text.split('\n\n')
         chunks = []
         current_chunk = []
         current_length = 0
 
-        for sentence in sentences:
-            # Skip empty sentences
-            if not sentence.strip():
-                continue
+        for paragraph in paragraphs:
+            sentences = paragraph.replace("? ", "?\n").replace("! ", "!\n").replace(". ", ".\n").split("\n")
+            
+            for sentence in sentences:
+                if not sentence.strip():
+                    continue
 
-            # Get token count for this sentence
-            tokens = tokenizer(sentence, return_tensors="pt", truncation=False)
-            sentence_length = len(tokens['input_ids'][0])
+                tokens = tokenizer(sentence, return_tensors="pt", truncation=True, max_length=512)
+                sentence_length = len(tokens['input_ids'][0])
 
-            # If adding this sentence would exceed max_tokens, start a new chunk
-            if current_length + sentence_length > max_tokens and current_chunk:
-                chunks.append(" ".join(current_chunk))
-                current_chunk = []
-                current_length = 0
+                if current_length + sentence_length > max_tokens and current_chunk:
+                    chunks.append(" ".join(current_chunk))
+                    current_chunk = []
+                    current_length = 0
 
-            current_chunk.append(sentence)
-            current_length += sentence_length
+                current_chunk.append(sentence)
+                current_length += sentence_length
 
-        # Add the last chunk if it exists
         if current_chunk:
             chunks.append(" ".join(current_chunk))
-
-        if not chunks:
-            raise ValueError("No valid chunks created from input text")
 
         return chunks
 
     except Exception as e:
-        print(json.dumps({"error": f"Error in split_text_into_chunks: {str(e)} (Simplified error message)"}), file=sys.stderr) # Simplified error message
+        print(json.dumps({"error": f"Error in split_text_into_chunks: {str(e)}"}), file=sys.stderr)
         raise
 
 def calculate_summary_length(text_length):
@@ -188,10 +183,10 @@ def calculate_summary_length(text_length):
 def process_chunk(chunk):
     max_retries = 3
     retry_delay = 5
-    chunk_timeout = 150 
     
     for attempt in range(max_retries):
         try:
+            # Clear CUDA cache if available before processing
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             
@@ -204,23 +199,25 @@ def process_chunk(chunk):
                 print(json.dumps({"debug": "Empty chunk detected"}), file=sys.stderr)
                 return ""
 
-            tokens = tokenizer(chunk, return_tensors="pt", truncation=False)
+            # Reduce chunk processing complexity
+            tokens = tokenizer(chunk, return_tensors="pt", truncation=True, max_length=512)
             chunk_token_length = len(tokens['input_ids'][0])
 
-            max_length, min_length = calculate_summary_length(chunk_token_length)
-            max_length = int(max_length * 0.8)
+            max_length = min(int(chunk_token_length * 0.4), 150)  # More aggressive length reduction
+            min_length = max(20, int(max_length * 0.5))
 
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 with model_lock:
                     try:
-                        with torch.autocast(device_type=device, dtype=torch.float16 if device == "mps" else torch.float32):
-                            summary = summarizer(chunk,
-                                               max_length=max_length,
-                                               min_length=min_length,
-                                               do_sample=False,
-                                               num_beams=1,
-                                               temperature=0.7)
+                        # Simplified generation parameters for faster processing
+                        summary = summarizer(chunk,
+                                          max_length=max_length,
+                                          min_length=min_length,
+                                          do_sample=False,
+                                          num_beams=1,  # Reduced from default
+                                          length_penalty=1.0,
+                                          early_stopping=True)
                     except Exception as model_error:
                         print(json.dumps({
                             "error": f"Model inference error (attempt {attempt + 1}): {str(model_error)}"
@@ -239,7 +236,6 @@ def process_chunk(chunk):
                 "warning": f"Retry attempt {attempt + 1} after error: {str(e)}"
             }), file=sys.stderr)
             time.sleep(retry_delay)
-            retry_delay *= 2
             continue
 
 def summarize_text(text):
