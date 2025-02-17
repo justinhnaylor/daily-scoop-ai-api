@@ -263,7 +263,7 @@ def summarize_text(text):
             futures = [executor.submit(process_chunk, chunk) for chunk in chunks]
             for i, future in enumerate(futures):
                 try:
-                    summary = future.result(timeout=180)  
+                    summary = future.result(timeout=300)  
                     if summary:
                         summaries.append(summary)
                     # Clear memory after each chunk
