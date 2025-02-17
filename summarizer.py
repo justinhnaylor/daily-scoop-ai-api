@@ -65,7 +65,7 @@ def initialize_summarizer():
                     torch_dtype = torch.float16 if device == "mps" else torch.float32
 
                     # Use user's cache directory for persistence
-                    cache_dir = os.path.expanduser('~/.cache/huggingface') # User cache directory
+                    cache_dir = os.path.expanduser('~/.cache/huggingface')
                     os.environ['HF_HOME'] = cache_dir
                     os.environ['TRANSFORMERS_CACHE'] = cache_dir
 
@@ -80,7 +80,7 @@ def initialize_summarizer():
                                                           trust_remote_code=True,
                                                           cache_dir=cache_dir,
                                                           torch_dtype=torch_dtype,
-                                                          force_download=True)  # Force fresh download
+                                                          force_download=True)
                     except Exception as e:
                         if "not a valid JSON file" in str(e):
                             print(json.dumps({"debug": "Clearing corrupted cache and retrying"}), file=sys.stderr)
@@ -95,7 +95,7 @@ def initialize_summarizer():
                                                               cache_dir=cache_dir,
                                                               torch_dtype=torch_dtype)
 
-                    # Add memory optimization settings
+                    # Add memory optimization settings with increased RAM
                     model = AutoModelForSeq2SeqLM.from_pretrained(
                         model_name,
                         config=config,
@@ -104,7 +104,7 @@ def initialize_summarizer():
                         cache_dir=cache_dir,
                         torch_dtype=torch_dtype,
                         load_in_8bit=False,
-                        max_memory={0: "1GB"},  
+                        max_memory={0: "4GB"},  # Increased from 1GB
                         low_cpu_mem_usage=True  
                     )
                     
@@ -119,16 +119,15 @@ def initialize_summarizer():
                         cache_dir=cache_dir,
                     )
 
-
                     summarizer = pipeline("summarization",
                                         model=model,
                                         tokenizer=tokenizer,
                                         device=device)
-                    print(json.dumps({"debug": f"Model loaded with dtype: {model.dtype if hasattr(model, 'dtype') else 'unknown'}"}), file=sys.stderr) # Debug log for dtype
+                    print(json.dumps({"debug": f"Model loaded with dtype: {model.dtype if hasattr(model, 'dtype') else 'unknown'}"}), file=sys.stderr)
 
                     print(json.dumps({"debug": "Summarizer initialized successfully"}), file=sys.stderr)
     except Exception as e:
-        print(json.dumps({"error": f"Failed to initialize summarizer: {str(e)} (Simplified error message)"}), file=sys.stderr) # Simplified error message
+        print(json.dumps({"error": f"Failed to initialize summarizer: {str(e)} (Simplified error message)"}), file=sys.stderr)
         raise
 
 def split_text_into_chunks(text):
@@ -262,34 +261,32 @@ def summarize_text(text):
 
         try:
             chunks = split_text_into_chunks(text)
-            print(json.dumps({"debug": f"Split into {len(chunks)} chunks"}), file=sys.stderr) # Simplified log
+            print(json.dumps({"debug": f"Split into {len(chunks)} chunks"}), file=sys.stderr)
         except Exception as chunk_error:
             return {"success": False, "error": f"Chunk splitting failed: {str(chunk_error)}"}
 
-        # Process chunks with longer timeout
+        # Process chunks sequentially with more memory
         summaries = []
         failed_chunks = 0
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            futures = [executor.submit(process_chunk, chunk) for chunk in chunks]
-            for i, future in enumerate(futures):
-                try:
-                    summary = future.result(timeout=300)  
-                    if summary is None:  # Chunk processing failed
-                        failed_chunks += 1
-                        if failed_chunks >= 2:  # If 2 or more chunks fail, abandon the summary
-                            return {"success": False, "error": "Too many chunks failed to process"}
-                        continue
-                    if summary:  # Only append non-empty summaries
-                        summaries.append(summary)
-                    # Clear memory after each chunk
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                except TimeoutError:
+        for i, chunk in enumerate(chunks):
+            try:
+                summary = process_chunk(chunk)
+                if summary is None:  # Chunk processing failed
                     failed_chunks += 1
                     if failed_chunks >= 2:  # If 2 or more chunks fail, abandon the summary
-                        return {"success": False, "error": "Too many chunks timed out"}
-                    print(json.dumps({"warning": f"Skipping chunk {i} due to timeout"}), file=sys.stderr)
-                    continue 
+                        return {"success": False, "error": "Too many chunks failed to process"}
+                    continue
+                if summary:  # Only append non-empty summaries
+                    summaries.append(summary)
+                # Clear memory after each chunk
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception as e:
+                failed_chunks += 1
+                if failed_chunks >= 2:  # If 2 or more chunks fail, abandon the summary
+                    return {"success": False, "error": "Too many chunks failed to process"}
+                print(json.dumps({"warning": f"Skipping chunk {i} due to error: {str(e)}"}), file=sys.stderr)
+                continue
 
         if not summaries:
             return {"success": False, "error": "No valid summaries generated"}
@@ -301,7 +298,7 @@ def summarize_text(text):
         return {"success": True, "summary": final_summary}
 
     except Exception as e:
-        error_msg = f"Error in summarize_text: {str(e)}" # Simplified top-level error message
+        error_msg = f"Error in summarize_text: {str(e)}"
         print(json.dumps({"error": error_msg}), file=sys.stderr)
         return {"success": False, "error": str(e)}
 
