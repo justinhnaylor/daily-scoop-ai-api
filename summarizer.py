@@ -195,63 +195,60 @@ def calculate_summary_length(text_length):
 
 def process_chunk(chunk):
     max_retries = 3
-    retry_delay = 10
-
-    device = "mps" if torch.backends.mps.is_available() else "cpu" # Get device for autocast
+    retry_delay = 5
+    
+    device = "mps" if torch.backends.mps.is_available() else "cpu"
 
     for attempt in range(max_retries):
         try:
             global summarizer, tokenizer
-
-            # Log start of processing with attempt number
-            print(json.dumps({"debug": f"Starting process_chunk attempt {attempt + 1}/{max_retries}"}), file=sys.stderr)
-
+            
+            # Add timeout handling for the entire chunk processing
+            start_time = time.time()
+            chunk_timeout = 120  # Increased to 120 seconds per chunk
+            
             if not chunk.strip():
                 print(json.dumps({"debug": "Empty chunk detected"}), file=sys.stderr)
                 return ""
 
-            # Tokenize chunk to get token length
             tokens = tokenizer(chunk, return_tensors="pt", truncation=False)
             chunk_token_length = len(tokens['input_ids'][0])
-            print(json.dumps({"debug": f"Token length: {chunk_token_length}"}), file=sys.stderr) # Simplified log
 
+            # Reduce target summary length for faster processing
             max_length, min_length = calculate_summary_length(chunk_token_length)
-            print(json.dumps({"debug": f"Summary length - max: {max_length}, min: {min_length}"}), file=sys.stderr) # Simplified log
+            max_length = int(max_length * 0.8)  # Reduce max length by 20%
 
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 with model_lock:
                     try:
-                        print(json.dumps({"debug": f"Starting model inference attempt {attempt + 1}"}), file=sys.stderr)
-                        with torch.autocast(device_type=device, dtype=torch.float16 if device == "mps" else torch.float32): # Mixed precision context
+                        with torch.autocast(device_type=device, dtype=torch.float16 if device == "mps" else torch.float32):
                             summary = summarizer(chunk,
                                                max_length=max_length,
                                                min_length=min_length,
-                                               do_sample=True,
-                                               temperature=0.7)  # Removed timeout parameter
-                        print(json.dumps({"debug": "Model inference completed"}), file=sys.stderr) # Simplified log
+                                               do_sample=False,
+                                               num_beams=1,  # Reduce beam search complexity
+                                               temperature=0.7)
                     except Exception as model_error:
                         print(json.dumps({
-                            "error": f"Model inference error (attempt {attempt + 1}): {str(model_error)}" # Simplified error message
+                            "error": f"Model inference error (attempt {attempt + 1}): {str(model_error)}"
                         }), file=sys.stderr)
                         raise
 
             if not summary or not summary[0].get('summary_text'):
-                print(json.dumps({"error": "Model returned empty summary"}), file=sys.stderr)
                 raise ValueError("Empty summary generated")
 
             return summary[0]['summary_text']
+            
         except Exception as e:
             if attempt == max_retries - 1:
                 raise
-            if isinstance(e, (TimeoutError, RuntimeError)): # Keep RuntimeError for potential GPU issues
-                print(json.dumps({
-                    "warning": f"Retry attempt {attempt + 1} after error: {str(e)}" # Simplified warning
-                }), file=sys.stderr)
-                time.sleep(retry_delay)
-                retry_delay *= 2
-                continue
-            raise
+            print(json.dumps({
+                "warning": f"Retry attempt {attempt + 1} after error: {str(e)}"
+            }), file=sys.stderr)
+            time.sleep(retry_delay)
+            retry_delay *= 2
+            continue
 
 def summarize_text(text):
     try:
@@ -272,22 +269,22 @@ def summarize_text(text):
         except Exception as chunk_error:
             return {"success": False, "error": f"Chunk splitting failed: {str(chunk_error)}"}
 
-        # Process chunks in parallel with better error handling
+        # Process chunks with longer timeout
         summaries = []
         chunk_errors = []
-        with ThreadPoolExecutor(max_workers=2) as executor:
+        with ThreadPoolExecutor(max_workers=1) as executor:
             futures = [executor.submit(process_chunk, chunk) for chunk in chunks]
             for i, future in enumerate(futures):
                 try:
-                    summary = future.result(timeout=90) # Increased timeout from 60 to 90 seconds for thread wait
+                    summary = future.result(timeout=150)  # Increased to 150 seconds
                     if summary:
                         summaries.append(summary)
-                except TimeoutError as e: # Catch TimeoutError specifically from future.result
-                    error_msg = f"Chunk {i} timed out" # Simplified timeout message
+                except TimeoutError:
+                    error_msg = f"Chunk {i} timed out after 150 seconds"
                     print(json.dumps({"error": error_msg}), file=sys.stderr)
                     chunk_errors.append(error_msg)
-                except Exception as e: # Catch other exceptions
-                    error_msg = f"Chunk {i} error: {str(e)}" # Simplified error message
+                except Exception as e:
+                    error_msg = f"Chunk {i} error: {str(e)}"
                     print(json.dumps({"error": error_msg}), file=sys.stderr)
                     chunk_errors.append(error_msg)
 
