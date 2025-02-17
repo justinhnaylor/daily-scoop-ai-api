@@ -190,11 +190,6 @@ def process_chunk(chunk):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             
-            global summarizer, tokenizer
-            
-            # Get the device type
-            device = "mps" if torch.backends.mps.is_available() else "cpu"
-            
             if not chunk.strip():
                 print(json.dumps({"debug": "Empty chunk detected"}), file=sys.stderr)
                 return ""
