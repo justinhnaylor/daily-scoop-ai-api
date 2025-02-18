@@ -12,5 +12,11 @@ echo "Running at $(date)"
 # Navigate to the project directory
 cd /Users/justinnaylor/projects/daily-scoop-ai-api
 
+# Activate the Python virtual environment
+source /Users/justinnaylor/projects/daily-scoop-ai-api/.venv/bin/activate
+
 # Run the Go command
 go run . -mode=recent
+
+# Deactivate the virtual environment (optional)
+deactivate
