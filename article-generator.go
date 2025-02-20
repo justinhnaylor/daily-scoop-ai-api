@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/google/generative-ai-go/genai"
@@ -24,14 +26,20 @@ func GenerateArticleFromSummaries(keyword string, summaries map[string]string, u
 		return nil, fmt.Errorf("error filtering summaries: %v", err)
 	}
 
+	// Verify and correct claims using Google Search grounding
+	verifiedSummaries, err := verifyClaimsWithGrounding(keyword, relevantSummaries)
+	if err != nil {
+		return nil, fmt.Errorf("error verifying claims: %v", err)
+	}
+
 	// Log the number of summaries before and after filtering
 	fmt.Printf("Article generation for '%s': Original summaries: %d, Relevant summaries: %d\n",
-		keyword, len(summaries), len(relevantSummaries))
+		keyword, len(summaries), len(verifiedSummaries))
 
 	// Only proceed if we have at least two relevant summaries
-	if len(relevantSummaries) < 2 {
+	if len(verifiedSummaries) < 2 {
 		return nil, fmt.Errorf("insufficient relevant summaries found for keyword '%s': need at least 2, got %d", 
-			keyword, len(relevantSummaries))
+			keyword, len(verifiedSummaries))
 	}
 
 	// Use existing prompt but with filtered summaries
@@ -39,7 +47,7 @@ func GenerateArticleFromSummaries(keyword string, summaries map[string]string, u
 Focus on a **single significant angle**—not a summary, but a **clear and factual narrative**.
 
 Summaries of source articles:
-%s`, keyword, formatSummariesForPrompt(relevantSummaries))
+%s`, keyword, formatSummariesForPrompt(verifiedSummaries))
 
 	prompt += `
 
@@ -269,4 +277,138 @@ Reply with ONLY "true" or "false" in JSON format: {"relevant": true} or {"releva
 	}
 
 	return relevantSummaries, nil
+}
+
+func verifyClaimsWithGrounding(keyword string, summaries map[string]string) (map[string]string, error) {
+	fmt.Printf("Starting claims verification for keyword '%s' with %d summaries\n", keyword, len(summaries))
+	
+	// Prepare input data for Python script
+	input := struct {
+		Keyword   string            `json:"keyword"`
+		Summaries map[string]string `json:"summaries"`
+	}{
+		Keyword:   keyword,
+		Summaries: summaries,
+	}
+
+	// Convert input to JSON
+	inputJSON, err := json.Marshal(input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal input data: %v", err)
+	}
+	fmt.Printf("Prepared JSON input for Python script (length: %d bytes)\n", len(inputJSON))
+
+	// Create command to run Python script
+	cmd := exec.Command("python3", "fact_checker.py")
+	fmt.Printf("Created Python command: %v\n", cmd.Args)
+	
+	// Set up pipes for input/output
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stdin pipe: %v", err)
+	}
+	
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stdout pipe: %v", err)
+	}
+
+	// Add stderr pipe for debugging
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stderr pipe: %v", err)
+	}
+
+	// Start the command
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start Python script: %v", err)
+	}
+	fmt.Println("Started Python script successfully")
+
+	// Create a channel for debug messages
+	debugChan := make(chan string, 100)
+	
+	// Read stderr in a goroutine
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			debugChan <- scanner.Text()
+		}
+		close(debugChan)
+	}()
+
+	// Write input to stdin
+	if _, err := stdin.Write(inputJSON); err != nil {
+		return nil, fmt.Errorf("failed to write to stdin: %v", err)
+	}
+	stdin.Close()
+	fmt.Println("Wrote input to Python script")
+
+	// Process debug messages
+	go func() {
+		for msg := range debugChan {
+			var debugMsg struct {
+				Debug     string `json:"debug"`
+				Error     string `json:"error"`
+				Original  string `json:"original"`
+				Verified  bool   `json:"verified"`
+				Corrected string `json:"corrected"`
+				Source    string `json:"source"`
+			}
+			if err := json.Unmarshal([]byte(msg), &debugMsg); err == nil {
+				if debugMsg.Debug != "" {
+					fmt.Printf("Python Debug: %s\n", debugMsg.Debug)
+					if debugMsg.Original != "" {
+						fmt.Printf("  Original: %s\n", debugMsg.Original)
+						fmt.Printf("  Verified: %v\n", debugMsg.Verified)
+						fmt.Printf("  Corrected: %s\n", debugMsg.Corrected)
+						fmt.Printf("  Source: %s\n", debugMsg.Source)
+					}
+				}
+				if debugMsg.Error != "" {
+					fmt.Printf("Python Error: %s\n", debugMsg.Error)
+				}
+			}
+		}
+	}()
+
+	// Read the response
+	var response struct {
+		Success bool `json:"success"`
+		Claims  []struct {
+			Original  string `json:"original"`
+			Verified  bool   `json:"verified"`
+			Corrected string `json:"corrected"`
+			Source    string `json:"source"`
+		} `json:"claims"`
+		Error string `json:"error"`
+	}
+
+	if err := json.NewDecoder(stdout).Decode(&response); err != nil {
+		return nil, fmt.Errorf("failed to decode Python script output: %v", err)
+	}
+
+	// Wait for the command to complete
+	if err := cmd.Wait(); err != nil {
+		return nil, fmt.Errorf("Python script failed: %v", err)
+	}
+
+	if !response.Success {
+		return nil, fmt.Errorf("fact checking failed: %s", response.Error)
+	}
+
+	// Update summaries with verified information
+	verifiedSummaries := make(map[string]string)
+	for url, summary := range summaries {
+		updatedSummary := summary
+		for _, claim := range response.Claims {
+			if !claim.Verified {
+				// Replace the original claim with the corrected version
+				updatedSummary = strings.Replace(updatedSummary, claim.Original, claim.Corrected, -1)
+			}
+		}
+		verifiedSummaries[url] = updatedSummary
+	}
+
+	return verifiedSummaries, nil
 }
