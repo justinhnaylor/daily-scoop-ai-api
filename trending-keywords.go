@@ -26,6 +26,7 @@ type TrendingTopic struct {
 const (
 	MAX_DAILY_TOPICS  = 3  // Or whatever number you want for daily
 	MAX_RECENT_TOPICS = 2  // Or whatever number you want for recent
+	MAX_SPORTS_TOPICS = 1  // Maximum number of sports topics for daily mode
 )
 
 // GetTrendingKeywords fetches trending keywords from Google Trends using Playwright and Webshare proxies
@@ -132,7 +133,7 @@ func GetTrendingKeywords() ([]TrendingTopic, error) {
 			}
 
 			// Check if topic is news-related using DeepSeek before adding
-			isNewsRelated, replacementKeyword, err := IsNewsRelatedTopic(topic.Keyword, topic.TrendBreakdown)
+			isNewsRelated, replacementKeyword, err := IsNewsRelatedTopic(topic.Keyword, topic.TrendBreakdown, "daily", nil)
 			if err != nil {
 				fmt.Printf("Warning: Could not check if '%s' is news-related: %v\n", topic.Keyword, err)
 				return
@@ -255,47 +256,66 @@ func FormatTrendingTopicsJSON(topics []TrendingTopic) (string, error) {
 }
 
 // IsNewsRelatedTopic uses Gemini to determine if a keyword is news-related
-func IsNewsRelatedTopic(keyword string, trendBreakdown []string) (bool, string, error) {
+func IsNewsRelatedTopic(keyword string, trendBreakdown []string, mode string, sportsCount *int) (bool, string, error) {
+	// Add mode-specific rules to the prompt
+	modeRules := ""
+	if mode == "recent" {
+		modeRules = `Additional Rule:
+- If the topic is sports-related (e.g., games, matches, scores, athletes, teams), respond with "false|sports"`
+	} else if mode == "daily" && *sportsCount >= MAX_SPORTS_TOPICS {
+		modeRules = `Additional Rule:
+- If the topic is sports-related (e.g., games, matches, scores, athletes, teams), respond with "false|sports"`
+	}
+
 	prompt := fmt.Sprintf(`Analyze if the trending topic '%s' is specifically related to CURRENT news or breaking events happening right now.
 
 Rules:
 - Answer in this format: "<true/false>|<replacement_keyword>"
+- If the topic is sports-related, add "|sports" at the end (e.g., "true|Super Bowl|sports" or "false|sports")
 - If the topic is specific enough and news-related, respond with "true|"
 - If the topic is a **single vague word** but news-related AND there are related terms, pick the most newsworthy related term and respond with "true|<selected_term>"
 - If the topic is a **phrase or already specific**, do not replace it; respond with "true|"
 - If the topic is too vague and there are no related terms, respond with "false|"
 - If the topic is not news-related, respond with "false|"
+%s
 
 Related terms for this topic: %v
 
 For example:
 - Specific news topic: "Ukraine conflict" -> "true|"
-- Single vague word with related terms: "UFC" with related term "UFC 300 main event cancelled" -> "true|UFC 300 main event cancelled"
+- Sports topic: "NBA Finals" -> "true|NBA Finals|sports"
+- Single vague word with related terms: "UFC" with related term "UFC 300 main event cancelled" -> "true|UFC 300 main event cancelled|sports"
 - Vague phrase that shouldn't be replaced: "market trends" -> "true|"
 - Non-news or too vague without related terms: "recipes" -> "false|"
 
-Analyze '%s' and provide your response:`, keyword, trendBreakdown, keyword)
+Analyze '%s' and provide your response:`, keyword, modeRules, trendBreakdown, keyword)
 
-	response, err := QueryGemini(prompt) // Changed to QueryGemini
+	response, err := QueryGemini(prompt)
 	if err != nil {
 		return false, "", err
 	}
 
-	fmt.Printf("Gemini Response for '%s': %s\n", keyword, response) // Debug print
+	fmt.Printf("Gemini Response for '%s': %s\n", keyword, response)
 
+	// Split response into parts (now possibly including sports indicator)
 	parts := strings.Split(response, "|")
-	if len(parts) != 2 {
+	if len(parts) < 2 {
 		return false, "", fmt.Errorf("invalid response format: %s", response)
 	}
 
 	isNews := strings.TrimSpace(strings.ToLower(parts[0])) == "true"
 	replacementKeyword := strings.TrimSpace(parts[1])
+	isSports := len(parts) > 2 && strings.TrimSpace(parts[2]) == "sports"
 
-	fmt.Printf("Parsed Response - IsNews: %v, Replacement: '%s'\n", isNews, replacementKeyword) // Debug print
+	// Update sports count if this is a sports topic and it was accepted
+	if isNews && isSports && mode == "daily" {
+		*sportsCount++
+		fmt.Printf("Sports topic count increased to: %d\n", *sportsCount)
+	}
 
 	// If it's news-related and we have a replacement keyword
-	if isNews && replacementKeyword != "" {
-		fmt.Printf("Using replacement keyword: '%s'\n", replacementKeyword) // Debug print
+	if isNews && replacementKeyword != "" && replacementKeyword != "sports" {
+		fmt.Printf("Using replacement keyword: '%s'\n", replacementKeyword)
 		return true, replacementKeyword, nil
 	}
 
@@ -438,11 +458,11 @@ func GetTrendingKeywordsWithMode(mode string) ([]TrendingTopic, error) {
 		return nil, fmt.Errorf("invalid mode: %s", mode)
 	}
 
-	// Pass both URL and max topics limit
-	return GetTrendingKeywordsFromURL(url, maxTopics)
+	// Pass both URL, max topics limit, and mode
+	return GetTrendingKeywordsFromURL(url, maxTopics, mode)
 }
 
-func GetTrendingKeywordsFromURL(trendURL string, maxTopics int) ([]TrendingTopic, error) {
+func GetTrendingKeywordsFromURL(trendURL string, maxTopics int, mode string) ([]TrendingTopic, error) {
 	// Fetch proxies from Webshare API
 	proxies, err := GetProxies()
 	if err != nil {
@@ -514,6 +534,7 @@ func GetTrendingKeywordsFromURL(trendURL string, maxTopics int) ([]TrendingTopic
 	}
 
 	var topics []TrendingTopic
+	sportsCount := 0 // Initialize sports counter
 
 	func() {
 		defer func() {
@@ -544,8 +565,8 @@ func GetTrendingKeywordsFromURL(trendURL string, maxTopics int) ([]TrendingTopic
 				TrendBreakdown: relatedTerms,
 			}
 
-			// Check if topic is news-related
-			isNewsRelated, replacementKeyword, err := IsNewsRelatedTopic(topic.Keyword, topic.TrendBreakdown)
+			// Check if topic is news-related using the updated function
+			isNewsRelated, replacementKeyword, err := IsNewsRelatedTopic(topic.Keyword, topic.TrendBreakdown, mode, &sportsCount)
 			if err != nil {
 				fmt.Printf("Warning: Could not check if '%s' is news-related: %v\n", topic.Keyword, err)
 				return

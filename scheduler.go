@@ -77,6 +77,9 @@ func (s *TrendScheduler) scheduleRecentTrends() {
 func processTopics(topics []TrendingTopic, mode string) {
     log.Printf("Processing %s trends with %d topics", mode, len(topics))
 
+    // Create a slice to store successfully saved articles
+    var savedArticles []*NewsArticle
+
     // Get search results
     searchResults, err := GetSearchResults(topics)
     if err != nil {
@@ -117,7 +120,7 @@ func processTopics(topics []TrendingTopic, mode string) {
         article, err := GenerateArticleFromSummaries(
             keyword,
             data.Summaries,
-            searchResults[0].URLs, // Using first result's URLs
+            searchResults[0].URLs,
         )
         if err != nil {
             log.Printf("[%s trends] Error generating article for %s: %v", mode, keyword, err)
@@ -147,5 +150,23 @@ func processTopics(topics []TrendingTopic, mode string) {
 
         log.Printf("[%s trends] Successfully processed and saved article: %s (ID: %s)", 
             mode, savedArticle.Title, savedArticle.ID)
+            
+        // Add to our collection of saved articles
+        savedArticles = append(savedArticles, savedArticle)
+    }
+
+    // After all articles are processed, handle daily newsletter selection if in daily mode
+    if mode == "daily" && len(savedArticles) > 0 {
+        articleId, titleText, previewText, err := selectDailyNewsletterArticle(savedArticles)
+        if err != nil {
+            log.Printf("Error selecting daily newsletter article: %v", err)
+            return
+        }
+
+        if err := dbClient.SaveDailyNewsletter(articleId, titleText, previewText); err != nil {
+            log.Printf("Error saving daily newsletter: %v", err)
+            return
+        }
+        log.Printf("Successfully saved daily newsletter for article ID: %s", articleId)
     }
 } 

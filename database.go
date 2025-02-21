@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +19,7 @@ var dbClient DBClient
 type DBClient interface {
 	SaveArticle(article *GeneratedArticle, mediaAssets NewsMediaAssets, imageSuccess bool) (*NewsArticle, error)
 	CheckSimilarKeywords(keyword string, hours int) (bool, error)
+	SaveDailyNewsletter(articleId string, titleText string, previewText string) error
 }
 
 // Models
@@ -137,6 +140,21 @@ func (s *SupabaseClient) CheckSimilarKeywords(keyword string, hours int) (bool, 
 	return count > 0, nil
 }
 
+func (s *SupabaseClient) SaveDailyNewsletter(articleId string, titleText string, previewText string) error {
+	newsletter := &DailyNewsletter{
+		ID:            uuid.New().String(),
+		NewsArticleId: articleId,
+		TitleText:     titleText,
+		PreviewText:   previewText,
+	}
+	
+	if err := s.db.Create(newsletter).Error; err != nil {
+		return fmt.Errorf("error saving daily newsletter: %v", err)
+	}
+	
+	return nil
+}
+
 // LocalDBClient implementation
 type LocalDBClient struct {
 	db *gorm.DB
@@ -248,6 +266,35 @@ func (l *LocalDBClient) CheckSimilarKeywords(keyword string, hours int) (bool, e
 	return count > 0, nil
 }
 
+func (l *LocalDBClient) SaveDailyNewsletter(articleId string, titleText string, previewText string) error {
+	newsletter := &DailyNewsletter{
+		ID:            uuid.New().String(),
+		NewsArticleId: articleId,
+		TitleText:     titleText,
+		PreviewText:   previewText,
+	}
+	
+	if err := l.db.Create(newsletter).Error; err != nil {
+		return fmt.Errorf("error saving daily newsletter: %v", err)
+	}
+	
+	return nil
+}
+
+type DailyNewsletter struct {
+	ID            string      `gorm:"type:uuid;primary_key;default:gen_random_uuid()"`
+	NewsArticleId string      `gorm:"column:newsArticleId;unique"`
+	NewsArticle   NewsArticle `gorm:"foreignKey:NewsArticleId"`
+	TitleText     string      `gorm:"column:titleText;type:text"`
+	PreviewText   string      `gorm:"column:previewText;type:text"`
+	CreatedAt     time.Time   `gorm:"column:createdAt;default:CURRENT_TIMESTAMP"`
+	Issue         int         `gorm:"column:issue;autoIncrement"`
+}
+
+func (DailyNewsletter) TableName() string {
+	return "daily_newsletter"
+}
+
 func initDB() error {
 	dbType := os.Getenv("DB_TYPE")
 	
@@ -279,4 +326,53 @@ func initDB() error {
 	}
 	
 	return nil
+}
+
+func selectDailyNewsletterArticle(articles []*NewsArticle) (string, string, string, error) {
+	// Convert articles to a format suitable for Gemini
+	var articleTexts []string
+	var articleMapping = make(map[int]*NewsArticle) // Add mapping to preserve article order
+
+	for i, article := range articles {
+		articleTexts = append(articleTexts, fmt.Sprintf("Article %d:\nTitle: %s\nBody: %s\nCategory: %d", 
+			i+1, article.Title, article.Body, *article.CategoryId))
+		articleMapping[i+1] = article // Store with 1-based index to match prompt
+	}
+
+	prompt := fmt.Sprintf(`Analyze these news articles and select the most shocking or newsworthy one for a daily newsletter. 
+AVOID sports articles (category 7) unless truly exceptional.
+Consider impact, uniqueness, and broad appeal.
+
+Articles:
+%s
+
+Respond in this JSON format:
+{
+    "selectedArticleIndex": N, // Use the article number as shown (1-%d)
+    "emailTitle": "Brief, attention-grabbing title (max 60 chars)",
+    "previewText": "Compelling preview text (max 150 chars)"
+}`, strings.Join(articleTexts, "\n\n"), len(articles))
+
+	response, err := queryGeminiForArticle(prompt)
+	if err != nil {
+		return "", "", "", fmt.Errorf("error querying Gemini: %v", err)
+	}
+
+	var result struct {
+		SelectedArticleIndex int    `json:"selectedArticleIndex"`
+		EmailTitle          string `json:"emailTitle"`
+		PreviewText         string `json:"previewText"`
+	}
+
+	if err := json.Unmarshal([]byte(response), &result); err != nil {
+		return "", "", "", fmt.Errorf("error parsing Gemini response: %v", err)
+	}
+
+	// Validate the index using our mapping
+	selectedArticle, exists := articleMapping[result.SelectedArticleIndex]
+	if !exists {
+		return "", "", "", fmt.Errorf("invalid article index returned by Gemini: %d", result.SelectedArticleIndex)
+	}
+
+	return selectedArticle.ID.String(), result.EmailTitle, result.PreviewText, nil
 } 
