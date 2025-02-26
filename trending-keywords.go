@@ -25,7 +25,7 @@ type TrendingTopic struct {
 // Update constants at the top of the file
 const (
 	MAX_DAILY_TOPICS  = 3  // Or whatever number you want for daily
-	MAX_RECENT_TOPICS = 2  // Or whatever number you want for recent
+	MAX_RECENT_TOPICS = 1  // Or whatever number you want for recent
 	MAX_SPORTS_TOPICS = 1  // Maximum number of sports topics for daily mode
 )
 
