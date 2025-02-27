@@ -346,7 +346,7 @@ func QueryGemini(prompt string) (string, error) {
 
 	// Create the request to Gemini API endpoint
 	apiKey := os.Getenv("GEMINI_API_KEY") // Use GEMINI_API_KEY
-	apiEndpoint := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=%s", apiKey) // Using gemini-pro
+	apiEndpoint := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=%s", apiKey) // Using gemini-pro
 
 	req, err := http.NewRequest("POST", apiEndpoint, bytes.NewBuffer(jsonBody))
 	if err != nil {
